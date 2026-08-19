@@ -1,5 +1,7 @@
 # inframux
 
+Product roadmap: [PLANS.md](PLANS.md).
+
 Repository-bound local infrastructure broker for coding agents.
 
 inframux resolves an exact approved Git checkout on every request, selects the

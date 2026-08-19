@@ -7,6 +7,25 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-19 — CLI user experience roadmap
+
+**Status:** Planned
+
+**Scope:** Define a public, implementation-ready roadmap for replacing raw CLI
+session dumps with a secure human presentation layer, interactive onboarding
+progress, explicit completion states, actionable recovery, and copyable next
+steps while preserving stable `--json` automation contracts.
+
+### Activity log
+
+- Added `PLANS.md` as the public roadmap and linked it from the README.
+- Prioritized onboarding as the P0 milestone, followed by operational commands,
+  maintenance lifecycle, and accessibility/discoverability.
+- Specified exact English success, failure, and agent-handoff copy; TTY and
+  machine-output boundaries; security constraints; file-level implementation
+  tasks; TDD steps; and acceptance gates.
+- No runtime behavior changed in this planning scope.
+
 ## 2026-08-19 — Public-release anonymization
 
 **Status:** Complete
