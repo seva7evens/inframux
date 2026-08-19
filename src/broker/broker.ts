@@ -21,6 +21,7 @@ import { deriveProjectIdentity } from '../onboarding/project.js';
 import { projectOnboardingJourney } from '../onboarding/projection.js';
 import { journeyError, withJourney } from '../cli/journey.js';
 import type { TrustLedger } from '../trust/ledger.js';
+import { planCheckoutAccess, probeCheckoutAccess, type CheckoutAccessReport } from '../trust/access.js';
 import { PendingTrustStore } from '../trust/pending.js';
 import { resolveProjectContext, validateCatalogBinding } from '../trust/resolve.js';
 import type { ResolvedProjectContext } from '../trust/types.js';
@@ -80,6 +81,7 @@ export class Broker {
   readonly #oauthLocks = new KeyedLock();
   readonly #pendingTrust: PendingTrustStore | undefined;
   readonly #onboarding: OnboardingSessionStore | undefined;
+  readonly #checkoutAccess: (repositoryRoot: string, gitCommonDir: string) => Promise<CheckoutAccessReport>;
   readonly #mcpSessions = new Map<string, {
     project: string;
     provider: string;
@@ -101,6 +103,7 @@ export class Broker {
     googleRefresh?: (credential: OAuthCredential, signal: AbortSignal) => Promise<OAuthRefreshResult>;
     pendingTrust?: PendingTrustStore;
     onboarding?: OnboardingSessionStore;
+    checkoutAccess?: (repositoryRoot: string, gitCommonDir: string) => Promise<CheckoutAccessReport>;
   }) {
     this.#securityMode = options.securityMode;
     this.#ledger = options.ledger;
@@ -114,6 +117,9 @@ export class Broker {
     this.#googleRefresh = options.googleRefresh ?? ((credential, signal) => refreshGoogleCredential(credential, { signal }));
     this.#pendingTrust = options.pendingTrust;
     this.#onboarding = options.onboarding;
+    this.#checkoutAccess = options.checkoutAccess ?? (options.securityMode === 'user'
+      ? async () => Object.freeze({ ready: true as const })
+      : probeCheckoutAccess);
   }
 
   async handle(operation: string, payload: unknown, context: BrokerRequestContext): Promise<JsonValue> {
@@ -154,6 +160,7 @@ export class Broker {
           evidence: { ...input.evidence, normalizedRemotes: [...input.evidence.normalizedRemotes] },
           workspaceRoot: input.workspaceRoot, providers: input.providers,
         });
+        const access = await this.#checkoutAccess(session.evidence.repositoryRoot, session.evidence.gitCommonDir);
         return withJourney({
           schema: 1, id: session.id, project: session.project,
           plan: session.providers.map((id) => {
@@ -163,7 +170,17 @@ export class Broker {
               documentationUrl: onboarding.documentationUrl };
           }),
           next: `inframux onboard configure ${session.id} --service <provider> --input-json '<non-secret-json>'`,
-        }, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
+        }, projectOnboardingJourney(session, this.#providers, access.ready ? 'ready' : 'required')) as unknown as JsonValue;
+      }
+      case 'onboarding.checkout-access': {
+        const input = onboardingSessionPayloadSchema.parse(payload);
+        const session = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
+        const report = await this.#checkoutAccess(session.evidence.repositoryRoot, session.evidence.gitCommonDir);
+        return planCheckoutAccess({
+          repositoryRoot: session.evidence.repositoryRoot,
+          gitCommonDir: session.evidence.gitCommonDir,
+          report,
+        }) as unknown as JsonValue;
       }
       case 'onboarding.status': {
         const input = onboardingSessionPayloadSchema.parse(payload);
@@ -216,6 +233,14 @@ export class Broker {
         const input = onboardingSessionPayloadSchema.parse(payload);
         const current = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
         if (current.completedAt !== undefined) return this.#onboardingCompletionResult(current);
+        const access = await this.#checkoutAccess(current.evidence.repositoryRoot, current.evidence.gitCommonDir);
+        if (!access.ready) {
+          throw journeyError(
+            'BROKER_CHECKOUT_INACCESSIBLE',
+            `The hardened broker cannot traverse checkout ancestor: ${access.inaccessibleAncestor}`,
+            projectOnboardingJourney(current, this.#providers, 'required'),
+          );
+        }
         const session = await this.#reconcileOnboarding(input.sessionId, context.callerUid);
         const incomplete = session.providers.filter((provider) => session.services[provider]?.profile === undefined);
         if (incomplete.length > 0) {

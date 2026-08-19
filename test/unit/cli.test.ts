@@ -68,6 +68,10 @@ test('parses explicit onboarding, MCP, browser, audit, lifecycle, and capability
   assert.deepEqual(parseCli(['trust', 'revoke', '/tmp/sample']), {
     command: 'trust.revoke', repository: '/tmp/sample', json: false, verbose: false,
   });
+  assert.deepEqual(parseCli(['trust', 'prepare-checkout', '018f47d2-8737-7a19-8000-123456789abc', '--apply']), {
+    command: 'trust.prepare-checkout', sessionId: '018f47d2-8737-7a19-8000-123456789abc', apply: true,
+    json: false, verbose: false,
+  });
   assert.deepEqual(parseCli(['auth', 'status', '--project', 'sample']), {
     command: 'auth.status', project: 'sample', json: false, verbose: false,
   });

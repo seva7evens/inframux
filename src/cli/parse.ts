@@ -18,6 +18,7 @@ export type CliCommand =
   | ({ command: 'link'; project: string; repository: string; writeManifest: boolean } & CommonCliOptions)
   | ({ command: 'trust.approve'; requestId: string } & CommonCliOptions)
   | ({ command: 'trust.revoke'; repository: string } & CommonCliOptions)
+  | ({ command: 'trust.prepare-checkout'; sessionId: string; apply: boolean } & CommonCliOptions)
   | ({ command: 'auth.status'; project: string } & CommonCliOptions)
   | ({ command: 'auth.revoke'; project: string; provider: string } & CommonCliOptions)
   | ({ command: 'replace-token'; provider: string } & CommonCliOptions)
@@ -191,6 +192,13 @@ export function parseCli(argv: readonly string[]): CliCommand {
       return { command: 'link', project, repository, writeManifest, ...shared };
     }
     case 'trust': {
+      if (second === 'prepare-checkout') {
+        const sessionId = uuid(required(third, 'trust prepare-checkout requires a session ID'));
+        if (args.length > 4 || (args[3] !== undefined && args[3] !== '--apply')) {
+          throw new Error(`Unknown option for trust prepare-checkout: ${args[3]}`);
+        }
+        return { command: 'trust.prepare-checkout', sessionId, apply: args[3] === '--apply', ...shared };
+      }
       if (second === 'approve') {
         const requestId = uuid(required(third, 'trust approve requires a request ID'));
         noExtra(args, 3);

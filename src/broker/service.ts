@@ -17,6 +17,7 @@ const PUBLIC_OPERATIONS = Object.freeze([
   'onboarding.start',
   'onboarding.configure',
   'onboarding.status',
+  'onboarding.checkout-access',
   'onboarding.resume',
   'onboarding.provider-verified',
   'onboarding.reuse',

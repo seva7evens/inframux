@@ -11,7 +11,7 @@ import { connectClient } from '../ipc/client.js';
 import { planBootstrap, planUninstall, rollback as rollbackVersion } from '../install/lifecycle.js';
 import { applyUserBootstrap, stageLocalRelease } from '../install/coordinator.js';
 import { resolvePackageRoot } from '../install/package-root.js';
-import { writeMaintenanceRequest, writeManagementRequest } from '../install/management.js';
+import { writeCheckoutAccessRequest, writeMaintenanceRequest, writeManagementRequest } from '../install/management.js';
 import { resolveInframuxPaths } from '../core/paths.js';
 import { createProviderRegistry } from '../providers/registry.js';
 import { deriveProjectIdentity, parseServiceList } from '../onboarding/project.js';
@@ -23,6 +23,7 @@ import { runPrivilegedHelper } from './privileged.js';
 import { renderError, renderResult } from './render.js';
 import { detectTerminalCapabilities } from './terminal.js';
 import { ProgressController } from './progress.js';
+import { createJourneyAction, createJourneyProjection, withJourney } from './journey.js';
 
 export interface CliDependencies {
   readonly cwd: string;
@@ -333,6 +334,47 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
       } finally {
         client.close();
       }
+    }
+
+    if (command.command === 'trust.prepare-checkout') {
+      const client = await connectBroker(dependencies.environment);
+      try {
+        const plan = await client.call('onboarding.checkout-access', { sessionId: command.sessionId }) as {
+          ready: boolean; principal: '_inframux'; ancestors: string[];
+          repositoryRoot: string; gitCommonDir: string;
+        };
+        if (!command.apply || plan.ready) {
+          const result = withJourney({ schema: 1, ...plan }, plan.ready
+            ? createJourneyProjection('healthy', true, [])
+            : createJourneyProjection('checkout-access-required', false, [createJourneyAction({
+              type: 'apply-checkout-access', actor: 'user',
+              command: `inframux trust prepare-checkout ${command.sessionId} --apply`,
+              description: 'Apply the reviewed minimal traversal ACL with macOS authorization.',
+              interactive: true, privileged: true,
+            })]));
+          dependencies.writeStdout(renderResult(command.command, result, command));
+          return 0;
+        }
+        const paths = resolveInframuxPaths({ mode: 'hardened' });
+        const requestRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-checkout-access-'));
+        const requestFile = path.join(requestRoot, 'request.json');
+        try {
+          const caller = os.userInfo();
+          await writeCheckoutAccessRequest(requestFile, {
+            schema: 1, operation: 'checkout-access', targetRoot: paths.root,
+            sessionId: command.sessionId, principal: plan.principal,
+            repositoryRoot: plan.repositoryRoot, gitCommonDir: plan.gitCommonDir,
+            ancestors: plan.ancestors,
+            caller: { uid: process.getuid?.() ?? caller.uid, gid: process.getgid?.() ?? caller.gid, username: caller.username },
+          });
+          await runPrivilegedHelper(
+            path.join(paths.root, 'current/bin/node'),
+            path.join(paths.root, 'current/dist/src/bin/manage.js'),
+            'checkout-access', requestFile,
+          );
+          return 0;
+        } finally { await rm(requestRoot, { recursive: true, force: true }); }
+      } finally { client.close(); }
     }
 
     const client = await connectBroker(dependencies.environment);

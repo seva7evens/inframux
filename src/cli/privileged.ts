@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-type Operation = 'bootstrap' | 'rollback' | 'uninstall';
+type Operation = 'bootstrap' | 'rollback' | 'uninstall' | 'checkout-access';
 type TerminalStream = NodeJS.WritableStream & { readonly isTTY?: boolean };
 
 export interface PrivilegedHelperOptions {
@@ -86,6 +86,7 @@ function startSpinner(
 function messageFor(operation: Operation): string {
   if (operation === 'bootstrap') return 'Installing inframux and starting services…';
   if (operation === 'rollback') return 'Rolling back inframux and restarting services…';
+  if (operation === 'checkout-access') return 'Preparing minimal checkout access for the hardened broker…';
   return 'Removing inframux services…';
 }
 

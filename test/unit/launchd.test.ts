@@ -80,3 +80,16 @@ test('verifies existing macOS service identities through fixed system executable
     args: ['-o', 'edit', '-a', 'testuser', '-t', 'user', '_inframux'],
   });
 });
+
+test('grants only search ACL to the fixed hardened broker group', async () => {
+  const calls: Array<{ executable: string; args: readonly string[] }> = [];
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    calls.push({ executable, args: [...args] });
+    return { stdout: '', stderr: '' };
+  } });
+  await system.grantCheckoutAccess(['/private-home/Documents']);
+  assert.deepEqual(calls, [{
+    executable: '/bin/chmod',
+    args: ['+a', 'group:_inframux allow search', '/private-home/Documents'],
+  }]);
+});

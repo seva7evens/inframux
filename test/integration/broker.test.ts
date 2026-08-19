@@ -98,6 +98,29 @@ test('finishes without explicit resume and replays canonical agent instructions'
   assert.deepEqual(resumed, first);
 });
 
+test('reports hardened checkout access before authorization and blocks finish with one recovery action', async (t) => {
+  const fixture = await setupBroker(t, undefined, undefined, async (repositoryRoot) => ({
+    ready: false as const, inaccessibleAncestor: path.dirname(repositoryRoot),
+  }), 'hardened');
+  const started = await fixture.broker.handle('onboarding.start', {
+    project: 'sample-app', displayName: 'Sample management', providers: ['synthetic'],
+    evidence: fixture.evidence, workspaceRoot: fixture.root,
+  }, fixture.context()) as { id: string; state: string; nextActions: Array<{ command: string }> };
+  assert.equal(started.state, 'checkout-access-required');
+  assert.equal(started.nextActions[0]!.command, `inframux trust prepare-checkout ${started.id}`);
+
+  const preview = await fixture.broker.handle('onboarding.checkout-access', { sessionId: started.id }, fixture.context()) as {
+    ready: boolean; ancestors: string[]; principal: string;
+  };
+  assert.deepEqual(preview.ancestors, [path.dirname(fixture.evidence.repositoryRoot)]);
+  assert.equal(preview.principal, '_inframux');
+  await assert.rejects(
+    fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()),
+    (error: unknown) => error instanceof InframuxError && error.code === 'BROKER_CHECKOUT_INACCESSIBLE' &&
+      error.recovery === `inframux trust prepare-checkout ${started.id}`,
+  );
+});
+
 test('derives provider identity pins from non-secret onboarding configuration before authorization', async (t) => {
   const fixture = await setupBroker(t);
   const started = await fixture.broker.handle('onboarding.start', {
@@ -412,6 +435,8 @@ async function setupBroker(
   t: TestContext,
   productionAdapter?: ProviderAdapter,
   googleRefresh?: (credential: OAuthCredential, signal: AbortSignal) => Promise<OAuthRefreshResult>,
+  checkoutAccess?: (repositoryRoot: string, gitCommonDir: string) => Promise<{ ready: true } | { ready: false; inaccessibleAncestor: string }>,
+  securityMode: 'hardened' | 'user' = 'user',
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-broker-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -482,13 +507,14 @@ async function setupBroker(
     allowedOwnerUids: [process.getuid!()], redactor, terminationGraceMs: 10,
   });
   const broker = new Broker({
-    securityMode: 'user', ledger, catalogs, credentials, audit: auditSink,
+    securityMode, ledger, catalogs, credentials, audit: auditSink,
     providers: createProviderRegistry(), worker: new LocalWorkerExecutor(runner, mcp),
     adapters: new ProviderAdapterRegistry(productionAdapter === undefined ? [] : [productionAdapter]),
     ...(googleRefresh === undefined ? {} : { googleRefresh }),
     pendingTrust: new PendingTrustStore({ stateRoot: state }),
     onboarding: new OnboardingSessionStore({ stateRoot: state }),
     redactor,
+    ...(checkoutAccess === undefined ? {} : { checkoutAccess }),
   });
   return {
     root, repository, evidence, manifest, broker, audit, auditSink, credentials, ledger,

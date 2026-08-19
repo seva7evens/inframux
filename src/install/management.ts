@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { constants } from 'node:fs';
-import { lstat, open, readFile, readlink } from 'node:fs/promises';
+import { lstat, open, readFile, readlink, realpath } from 'node:fs/promises';
 import { z } from 'zod';
 
 import type { BundleManifest } from './bundle.js';
@@ -44,6 +44,16 @@ const maintenanceRequestSchema = z.object({
     context.addIssue({ code: 'custom', path: ['version'], message: 'Uninstall cannot select a version' });
   }
 });
+const checkoutAccessRequestSchema = z.object({
+  schema: z.literal(1), operation: z.literal('checkout-access'),
+  targetRoot: z.string().startsWith('/'), sessionId: z.uuid(), principal: z.literal('_inframux'),
+  repositoryRoot: z.string().startsWith('/'), gitCommonDir: z.string().startsWith('/'),
+  ancestors: z.array(z.string().startsWith('/')).min(1).max(16),
+  caller: z.object({
+    uid: z.number().int().nonnegative(), gid: z.number().int().nonnegative(),
+    username: z.string().regex(/^[a-z_][a-z0-9_-]{0,63}$/i),
+  }).strict(),
+}).strict();
 
 export interface BootstrapManagementRequest {
   readonly schema: 1;
@@ -61,6 +71,7 @@ export interface ServiceAccounts {
 }
 
 export type MaintenanceManagementRequest = z.infer<typeof maintenanceRequestSchema>;
+export type CheckoutAccessManagementRequest = z.infer<typeof checkoutAccessRequestSchema>;
 
 export interface ManagementSystem {
   fileVaultStatus(): Promise<FileVaultStatus>;
@@ -72,6 +83,7 @@ export interface ManagementSystem {
   probeServices(targetRoot: string): Promise<boolean>;
   stopServices(): Promise<void>;
   removeInstallation(targetRoot: string): Promise<void>;
+  grantCheckoutAccess(ancestors: readonly string[]): Promise<void>;
 }
 
 export async function writeManagementRequest(filename: string, requestInput: BootstrapManagementRequest): Promise<void> {
@@ -117,6 +129,20 @@ export async function readMaintenanceRequest(filename: string): Promise<Maintena
     throw new Error('Maintenance request is not a safe private regular file');
   }
   const request = maintenanceRequestSchema.parse(JSON.parse(await readFile(filename, 'utf8')));
+  assertRequestOwner(stat.uid, stat.gid, request.caller);
+  return request;
+}
+
+export async function writeCheckoutAccessRequest(filename: string, requestInput: CheckoutAccessManagementRequest): Promise<void> {
+  await writePrivateJson(filename, checkoutAccessRequestSchema.parse(requestInput));
+}
+
+export async function readCheckoutAccessRequest(filename: string): Promise<CheckoutAccessManagementRequest> {
+  const stat = await lstat(filename);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600 || stat.size > 1024 * 1024) {
+    throw new Error('Checkout access request is not a safe private regular file');
+  }
+  const request = checkoutAccessRequestSchema.parse(JSON.parse(await readFile(filename, 'utf8')));
   assertRequestOwner(stat.uid, stat.gid, request.caller);
   return request;
 }
@@ -204,6 +230,29 @@ export async function applyHardenedUninstall(
   });
 }
 
+export async function applyCheckoutAccess(
+  request: CheckoutAccessManagementRequest,
+  system: ManagementSystem,
+): Promise<{ readonly schema: 1; readonly prepared: true; readonly principal: '_inframux'; readonly ancestors: readonly string[] }> {
+  checkoutAccessRequestSchema.parse(request);
+  validateMaintenanceTarget(request.targetRoot);
+  const ancestors: string[] = [];
+  for (const candidate of request.ancestors) {
+    const ancestor = path.resolve(candidate);
+    if (!isStrictAncestor(ancestor, request.repositoryRoot) && !isStrictAncestor(ancestor, request.gitCommonDir)) {
+      throw new Error('Checkout ancestor is outside captured repository evidence');
+    }
+    const stat = await lstat(ancestor);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(ancestor) !== ancestor) {
+      throw new Error('Checkout ancestor must be a canonical directory');
+    }
+    ancestors.push(ancestor);
+  }
+  const unique = Object.freeze([...new Set(ancestors)]);
+  await system.grantCheckoutAccess(unique);
+  return Object.freeze({ schema: 1, prepared: true, principal: '_inframux', ancestors: unique });
+}
+
 function validateRequest(request: BootstrapManagementRequest): void {
   managementRequestSchema.parse(request);
   if (request.schema !== 1 || request.operation !== 'bootstrap') throw new Error('Invalid management request');
@@ -226,6 +275,12 @@ function validateMaintenanceTarget(targetRoot: string): void {
   if (!path.isAbsolute(targetRoot) || /\0|[\r\n]/u.test(targetRoot) || targetRoot === path.parse(targetRoot).root) {
     throw new Error('Maintenance target is unsafe');
   }
+}
+
+function isStrictAncestor(ancestor: string, targetInput: string): boolean {
+  const target = path.resolve(targetInput);
+  const relative = path.relative(ancestor, target);
+  return relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 async function writePrivateJson(filename: string, value: unknown): Promise<void> {

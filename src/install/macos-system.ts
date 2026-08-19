@@ -129,6 +129,12 @@ export class MacOsManagementSystem implements ManagementSystem {
     }
   }
 
+  async grantCheckoutAccess(ancestors: readonly string[]): Promise<void> {
+    for (const ancestor of ancestors) {
+      await this.#execute('/bin/chmod', ['+a', 'group:_inframux allow search', ancestor]);
+    }
+  }
+
   async #createGroup(name: string, gid: number): Promise<void> {
     await this.#execute('/usr/bin/dscl', ['.', '-create', `/Groups/${name}`]);
     await this.#execute('/usr/bin/dscl', ['.', '-create', `/Groups/${name}`, 'PrimaryGroupID', String(gid)]);
