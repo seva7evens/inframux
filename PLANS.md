@@ -17,7 +17,56 @@ animation or decoration.
 runner, existing broker protocol and provider registry. No UI dependency is
 needed.
 
-**Spec:** Product requirements and copy contract in this document.
+**Spec:** The approved architecture and normative contracts are defined in
+`docs/superpowers/specs/2026-08-19-unified-cli-journeys-design.md`. This roadmap
+tracks delivery order and acceptance gates.
+
+## Live-journey findings incorporated into the roadmap
+
+A real multi-provider onboarding exposed state-machine and recovery gaps that
+cannot be fixed by presentation alone:
+
+- an unverified provider configuration could not be corrected in the same
+  session;
+- machine responses after `start` did not consistently expose the exact next
+  command;
+- `finish` required an implicit preceding `resume`;
+- the hardened broker could not traverse a private checkout ancestor and the
+  failure was misclassified as `INVALID_REQUEST`;
+- successful completion omitted canonical agent instructions and was not fully
+  replayable;
+- nested `--help` was parsed as a session identifier;
+- UptimeRobot could report an empty, operator-useless account fingerprint;
+- default human output exposed internal session JSON instead of progress,
+  outcome, and recovery.
+
+These are P0 requirements. The implementation must repair the domain contract
+first and render both output modes from that same canonical result.
+
+## Canonical journey contract
+
+Every finite CLI command returns an additive journey projection alongside its
+existing result fields:
+
+```json
+{
+  "schema": 1,
+  "state": "ready-to-finish",
+  "complete": false,
+  "nextActions": [
+    {
+      "type": "finish-onboarding",
+      "actor": "agent",
+      "command": "inframux onboard finish <session-id> --json"
+    }
+  ]
+}
+```
+
+Error envelopes use the same `state`, `complete`, and `nextActions` fields.
+Existing success fields, error codes, and exit codes remain compatible. Human
+mode is a deterministic presentation of this object, not an independently
+invented flow.
 
 ## Global constraints
 
@@ -31,8 +80,9 @@ needed.
   stripped of control and terminal escape characters before rendering.
 - Human mode must remain useful without color, Unicode, or animation.
 - A failed credential verification must say that the credential was not saved.
-- The CLI must never claim onboarding is complete before `onboard finish` and
-  the required health checks succeed.
+- The CLI must never claim onboarding is complete before `onboard finish`
+  proves credential reconciliation and exact-checkout trust. It must separately
+  identify any provider health or audit checks that have not yet run.
 - Provider API and broker protocol behavior remain unchanged unless a milestone
   explicitly defines a versioned protocol change.
 
@@ -84,9 +134,45 @@ Next step — tell your coding agent:
 You can safely close this terminal.
 ```
 
-The session ID is non-secret and must be easy to select and copy. The CLI does
-not run `onboard finish` automatically because repository trust and tracked
-documentation remain agent-owned steps.
+The session ID is non-secret and must be easy to select and copy. Authorization
+does not run `onboard finish` automatically because exact-checkout trust remains
+an explicit agent-owned transition. `finish` does, however, perform safe
+credential reconciliation internally; a separate `resume` is never mandatory.
+
+### Reconfiguration and replay
+
+- `onboard configure` replaces a previous configuration while that provider is
+  not verified. Exact repeats remain no-ops.
+- Verified provider configuration remains immutable in the current session and
+  returns a typed recovery action rather than silently invalidating a working
+  credential.
+- `onboard resume` remains available for explicit recovery, but `finish`
+  performs the same reconciliation before checking completeness.
+- Repeated `finish` and `resume` after completion return the same completion
+  projection, including `agentInstructions` and safe next actions.
+
+### Hardened checkout accessibility
+
+- Onboarding checks whether the hardened broker can traverse the captured
+  checkout before authorization work is wasted.
+- Failure uses `BROKER_CHECKOUT_INACCESSIBLE`, identifies the first inaccessible
+  path segment without exposing private contents, and returns an exact preview
+  or apply command.
+- `inframux trust prepare-checkout <session-id>` previews the minimal ACL delta.
+  `--apply` uses the sealed privileged management path and grants only `search`
+  to the installed broker principal on required ancestor directories.
+- The command never makes a directory world-readable and never accepts an
+  arbitrary principal or path from the caller.
+- Applied ACL entries are recorded so inframux can avoid duplicates and remove
+  only entries it owns during cleanup.
+
+### Discoverability
+
+- `--help` and `-h` are recognized before positional validation at every
+  command depth.
+- Help is generated from a typed command catalog and includes usage, purpose,
+  output modes, interaction requirements, and one safe example.
+- Invalid syntax reports the nearest valid usage and an exact help command.
 
 ### Failure and retry experience
 
@@ -124,16 +210,21 @@ Agents in this repository can now use the configured provider contexts.
 Run `inframux status` at any time to review them.
 ```
 
-If health checks are not run by `finish`, the CLI must print the exact remaining
-commands and describe onboarding as configured, not fully verified.
+`finish` proves credential reconciliation and exact-checkout trust. Provider
+reachability and audit-chain verification remain explicit postconditions. The
+result therefore returns canonical `agentInstructions` and exact actions for
+`status`, `doctor`, and `audit verify`; human copy never claims those checks ran
+when they did not.
 
 ## Roadmap
 
 ### Milestone 1 — Onboarding human interface (P0)
 
-Deliver the authorization progress view, safe provider summaries, success
-handoff, partial-failure recovery, and human output for `start`, `resume`,
-`authorize`, and `finish`.
+Deliver the canonical journey projection, safe reconfiguration, internal
+finish reconciliation, hardened-checkout preflight and repair, authorization
+progress view, safe provider summaries, idempotent completion with agent
+instructions, partial-failure recovery, and human output for every onboarding
+command.
 
 ### Milestone 2 — Operational command consistency (P1)
 
@@ -202,6 +293,10 @@ export function renderAgentHandoff(sessionId: string): string;
   control characters in labels.
 - [ ] Run the unit test and `npm run check`; both must pass.
 - [ ] Commit as `feat(cli): add onboarding human presenter`.
+
+Before this presenter is wired, add pure journey projection types and tests.
+The presenter must consume only the canonical projection; it must not inspect
+raw broker/session internals or infer its own next action.
 
 ### Task 2: Add a TTY-safe progress controller
 
@@ -306,6 +401,18 @@ export class OnboardingProgress {
 - [ ] Make `finish` distinguish credential completion, exact-checkout trust,
   provider health, and audit verification. Never collapse them into one vague
   success message.
+- [ ] Make `finish` reconcile already-enrolled credentials internally and
+  return `SESSION_AUTHORIZATION_REQUIRED` with an exact action only when
+  providers remain incomplete.
+- [ ] Return canonical `agentInstructions` from the first and every repeated
+  successful `finish`; add a repository-bound `agent-instructions` command.
+- [ ] Permit replacement of unverified provider configuration while keeping
+  verified configuration immutable.
+- [ ] Add broker traversal preflight and the sealed, preview-first
+  `trust prepare-checkout` repair path.
+- [ ] Replace an empty UptimeRobot fingerprint with a truncated keyed
+  credential fingerprint, monitor count, and explicitly mutable resource
+  digest without claiming an account ID the API does not expose.
 - [ ] Extend synthetic E2E to run the complete human journey and separately
   parse every machine-mode response.
 - [ ] Run `npm run test:e2e` and commit as
@@ -373,3 +480,5 @@ export class OnboardingProgress {
 - zsh completion is generated from the same provider and command registries.
 - Human output is understandable at 80 columns, without color, and with ASCII
   fallback.
+- Nested `--help` never reaches positional ID validation.
+- Every syntax or state error exposes one exact recovery or help command.

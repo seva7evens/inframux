@@ -7,6 +7,39 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-19 — Unified CLI journey contract
+
+**Status:** Awaiting written-spec review
+
+**Scope:** Turn every inframux command into a coherent human and machine
+journey, beginning with the live onboarding failures observed during a
+multi-provider setup. Define one additive `state`/`nextActions` contract,
+repair onboarding reconfiguration and reconciliation, make hardened checkout
+access diagnosable and safely repairable, return canonical agent instructions,
+standardize command help and recovery, and verify the complete experience with
+unit, integration, synthetic E2E, installed-package, TTY, accessibility, and
+security tests.
+
+### Activity log
+
+- Classified the change as architectural because it modifies public CLI,
+  broker, onboarding state-machine, trust, and error contracts.
+- Reviewed the live onboarding incident, current CLI parser/rendering,
+  onboarding session store, broker operations, provider adapters, public docs,
+  test suite, and the existing CLI UX roadmap.
+- Compared three approaches and selected an additive unified journey contract
+  with independent human and machine presenters. The user approved this
+  architecture before implementation.
+- Updated `PLANS.md` with every incident-derived P0 requirement and the
+  canonical journey contract.
+- Wrote and self-reviewed the normative design in
+  `docs/superpowers/specs/2026-08-19-unified-cli-journeys-design.md`. Removed a
+  contradiction between onboarding completion and later health checks,
+  required an action on every incomplete error, and documented UptimeRobot's
+  identity limitation without claiming unverified administrative scope.
+- Runtime implementation has not started. The written-spec review gate
+  precedes the TDD implementation plan.
+
 ## 2026-08-19 — CLI user experience roadmap
 
 **Status:** Planned
