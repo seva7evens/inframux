@@ -17,7 +17,20 @@ export const sentryProvider: ProviderDefinition = {
 export const uptimeRobotProvider: ProviderDefinition = {
   id: 'uptimerobot', displayName: 'UptimeRobot', adapterVersion: 1,
   credentialEnvironmentVariable: 'UPTIMEROBOT_API_KEY', executables: {},
-  identity: { operation: 'identity.verify', expectedFields: ['accountFingerprint'], maxAgeMs: 86_400_000 },
+  identity: {
+    operation: 'identity.verify', expectedFields: ['accountFingerprint'], maxAgeMs: 86_400_000,
+    deriveExpected: (service) => {
+      const monitors = service.monitors ?? {};
+      if (monitors === null || typeof monitors !== 'object' || Array.isArray(monitors)) {
+        throw new Error('UptimeRobot monitors must be an object');
+      }
+      const ids = Object.values(monitors).map((value) => {
+        if (typeof value !== 'string' || value.length === 0) throw new Error('UptimeRobot monitor IDs must be non-empty strings');
+        return value;
+      }).sort();
+      return Object.freeze({ accountFingerprint: `monitors:${ids.join(',')}` });
+    },
+  },
   recoveryCommand: 'inframux replace-token uptimerobot',
   onboarding: {
     auth: 'static-token', setupUrl: 'https://dashboard.uptimerobot.com/integrations',
@@ -30,7 +43,10 @@ export const uptimeRobotProvider: ProviderDefinition = {
 export const resendProvider: ProviderDefinition = {
   id: 'resend', displayName: 'Resend', adapterVersion: 1,
   credentialEnvironmentVariable: 'RESEND_API_KEY', executables: {},
-  identity: { operation: 'identity.verify', expectedFields: ['accountScope'], maxAgeMs: 86_400_000 },
+  identity: {
+    operation: 'identity.verify', expectedFields: ['accountScope'], maxAgeMs: 86_400_000,
+    deriveExpected: () => Object.freeze({ accountScope: 'full-access' }),
+  },
   recoveryCommand: 'inframux replace-token resend',
   onboarding: {
     auth: 'static-token', setupUrl: 'https://resend.com/api-keys',

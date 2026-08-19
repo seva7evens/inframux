@@ -41,3 +41,28 @@ root commit so removed context cannot reappear through Git history.
   / 879123 bytes unpacked.
 - The public branch is delivered as one clean root commit so removed private
   context is not reachable through the published Git history.
+
+## 2026-08-19 — Derived provider identity repair
+
+**Status:** Complete
+
+**Scope:** Repair static-provider onboarding when the identity pin is derived
+from safe provider configuration rather than entered as a separate catalog
+field. Preserve existing onboarding sessions and fail closed during live
+identity verification.
+
+### Activity log
+
+- Reproduced the Resend authorization failure with a broker integration test:
+  an empty, valid non-secret configuration reached enrollment without the
+  expected `accountScope` identity pin.
+- Extended provider identity contracts with an optional pure derivation step.
+  Resend now derives its required full-access capability pin, while
+  UptimeRobot deterministically derives its monitor-set fingerprint from sorted
+  configured monitor IDs.
+- Catalog values remain authoritative and verified adapter output must still
+  exactly match the derived identity. No credential value is defaulted,
+  persisted in project configuration, or exposed to the agent.
+- Verification passed on exact Node.js 24.18.1: 115/115 unit/integration tests,
+  95.96% lines / 93.09% functions / 82.12% branches, synthetic multi-process
+  E2E, and publication and secret scans over 162 tracked files.

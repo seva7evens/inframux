@@ -973,7 +973,10 @@ function expectedIdentityFromCatalog(
   service: Record<string, unknown>,
   supplied: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
-  const expected: Record<string, string> = { ...supplied };
+  const expected: Record<string, string> = {
+    ...supplied,
+    ...(provider.identity.deriveExpected?.(service) ?? {}),
+  };
   for (const field of provider.identity.expectedFields) {
     const catalogValue = service[field];
     if (typeof catalogValue === 'string') expected[field] = catalogValue;

@@ -63,6 +63,34 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
   assert.equal((await fixture.ledger.find(fixture.evidence.repositoryRoot))?.project, 'sample-app');
 });
 
+test('derives provider identity pins from non-secret onboarding configuration before authorization', async (t) => {
+  const fixture = await setupBroker(t);
+  const started = await fixture.broker.handle('onboarding.start', {
+    project: 'sample-app', displayName: 'Sample management', providers: ['resend', 'uptimerobot'],
+    evidence: fixture.evidence, workspaceRoot: fixture.root,
+  }, fixture.context()) as { id: string };
+
+  await fixture.broker.handle('onboarding.configure', {
+    sessionId: started.id, provider: 'resend', input: {},
+  }, fixture.context());
+  await fixture.broker.handle('onboarding.configure', {
+    sessionId: started.id, provider: 'uptimerobot', input: { monitors: { api: '200000002', web: '100000001' } },
+  }, fixture.context());
+
+  assert.deepEqual(await fixture.broker.handle('credential.enrollment-info', {
+    project: 'sample-app', provider: 'resend',
+  }, fixture.context()), {
+    schema: 1, project: 'sample-app', provider: 'resend',
+    expectedIdentity: { accountScope: 'full-access' }, scopes: [],
+  });
+  assert.deepEqual(await fixture.broker.handle('credential.enrollment-info', {
+    project: 'sample-app', provider: 'uptimerobot',
+  }, fixture.context()), {
+    schema: 1, project: 'sample-app', provider: 'uptimerobot',
+    expectedIdentity: { accountFingerprint: 'monitors:100000001,200000002' }, scopes: [],
+  });
+});
+
 test('enrolls once, resolves checkout, reports status, and runs a verified provider lease', async (t) => {
   const fixture = await setupBroker(t);
   const googleEnrollment = await fixture.broker.handle('credential.enrollment-info', {

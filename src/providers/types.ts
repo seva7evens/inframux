@@ -18,6 +18,7 @@ export interface ProviderIdentityContract {
   readonly operation: string;
   readonly expectedFields: readonly string[];
   readonly maxAgeMs: number;
+  readonly deriveExpected?: (service: Readonly<Record<string, unknown>>) => Readonly<Record<string, string>>;
 }
 
 export interface ProviderExecutableIds {
