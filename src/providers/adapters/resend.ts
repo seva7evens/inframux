@@ -5,7 +5,7 @@ import { assertFound, bearer, genericApiCall } from './shared.js';
 import type { ProviderAdapter } from './types.js';
 
 const serviceSchema = z.object({
-  accountScope: z.literal('full-access').default('full-access'),
+  accountScope: z.enum(['full_access', 'full-access']).transform(() => 'full_access' as const).default('full_access'),
   anticipatedDomain: z.string().min(1).optional(), status: z.string().optional(),
 }).passthrough();
 const listSchema = z.object({ object: z.literal('list'), data: z.array(z.record(z.string(), z.json())) }).passthrough();

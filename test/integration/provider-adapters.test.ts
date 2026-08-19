@@ -70,8 +70,13 @@ test('verifies every static provider against exact catalog identity and resource
     },
     {
       provider: 'resend',
-      service: { credential: 'resend-admin', accountScope: 'full-access', anticipatedDomain: 'mail.example.test', status: 'planned' },
-      identity: { accountScope: 'full-access' },
+      service: { credential: 'resend-admin', accountScope: 'full_access', anticipatedDomain: 'mail.example.test', status: 'planned' },
+      identity: { accountScope: 'full_access' },
+    },
+    {
+      provider: 'resend',
+      service: { credential: 'resend-legacy-admin', accountScope: 'full-access', status: 'planned' },
+      identity: { accountScope: 'full_access' },
     },
     {
       provider: 'posthog',

@@ -81,7 +81,7 @@ test('derives provider identity pins from non-secret onboarding configuration be
     project: 'sample-app', provider: 'resend',
   }, fixture.context()), {
     schema: 1, project: 'sample-app', provider: 'resend',
-    expectedIdentity: { accountScope: 'full-access' }, scopes: [],
+    expectedIdentity: { accountScope: 'full_access' }, scopes: [],
   });
   assert.deepEqual(await fixture.broker.handle('credential.enrollment-info', {
     project: 'sample-app', provider: 'uptimerobot',

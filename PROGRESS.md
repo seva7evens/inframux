@@ -66,3 +66,9 @@ identity verification.
 - Verification passed on exact Node.js 24.18.1: 115/115 unit/integration tests,
   95.96% lines / 93.09% functions / 82.12% branches, synthetic multi-process
   E2E, and publication and secret scans over 162 tracked files.
+- A live follow-up exposed incompatible spellings for the same Resend
+  permission: the official API uses `full_access`, while the initial adapter
+  contract used `full-access`. Added a second red-green regression test and
+  canonical normalization. Both spellings and omitted legacy configuration are
+  accepted, but stored and verified identity metadata always uses the official
+  `full_access` value.

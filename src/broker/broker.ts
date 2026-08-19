@@ -973,13 +973,14 @@ function expectedIdentityFromCatalog(
   service: Record<string, unknown>,
   supplied: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
+  const derived = provider.identity.deriveExpected?.(service) ?? {};
   const expected: Record<string, string> = {
     ...supplied,
-    ...(provider.identity.deriveExpected?.(service) ?? {}),
+    ...derived,
   };
   for (const field of provider.identity.expectedFields) {
     const catalogValue = service[field];
-    if (typeof catalogValue === 'string') expected[field] = catalogValue;
+    if (typeof catalogValue === 'string' && derived[field] === undefined) expected[field] = catalogValue;
     if (expected[field] === undefined) {
       throw new InframuxError('WRONG_PROVIDER_IDENTITY', `Catalog is missing expected provider identity field: ${field}`);
     }

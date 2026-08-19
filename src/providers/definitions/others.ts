@@ -45,7 +45,11 @@ export const resendProvider: ProviderDefinition = {
   credentialEnvironmentVariable: 'RESEND_API_KEY', executables: {},
   identity: {
     operation: 'identity.verify', expectedFields: ['accountScope'], maxAgeMs: 86_400_000,
-    deriveExpected: () => Object.freeze({ accountScope: 'full-access' }),
+    deriveExpected: (service) => {
+      const scope = service.accountScope ?? 'full_access';
+      if (scope !== 'full_access' && scope !== 'full-access') throw new Error('Resend accountScope must be full_access');
+      return Object.freeze({ accountScope: 'full_access' });
+    },
   },
   recoveryCommand: 'inframux replace-token resend',
   onboarding: {
