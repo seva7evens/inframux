@@ -36,6 +36,7 @@
     "test:unit": "tsx --test test/unit/*.test.ts",
     "test:integration": "tsx --test test/integration/*.test.ts",
     "test:e2e": "node scripts/e2e-synthetic.mjs",
+    "test:journeys": "node scripts/e2e-synthetic.mjs",
     "test:bootstrap": "node scripts/bootstrap-smoke.mjs",
     "test:package": "node scripts/package-smoke.mjs",
     "test:coverage": "tsx --test --experimental-test-coverage --test-coverage-include=src/onboarding/** --test-coverage-include=src/security/** --test-coverage-include=src/trust/** --test-coverage-include=src/providers/adapters/** --test-coverage-include=src/providers/registry.ts --test-coverage-lines=85 --test-coverage-functions=85 --test-coverage-branches=70 test/unit/*.test.ts test/integration/*.test.ts",
@@ -43,7 +44,7 @@
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "audit:deps": "npm audit --audit-level=high",
     "test:runtime": "node --test runtime/playwright/test/*.test.mjs",
-    "verify": "npm run check && npm run build && npm test && npm run test:coverage && npm run test:e2e && npm run test:bootstrap && npm run test:package && npm run scan:publication && npm run scan:secrets && npm run audit:deps && npm run test:runtime"
+    "verify": "npm run check && npm run build && npm test && npm run test:coverage && npm run test:journeys && npm run test:bootstrap && npm run test:package && npm run scan:publication && npm run scan:secrets && npm run audit:deps && npm run test:runtime"
   },
   "engines": {
     "node": "24.18.1"

@@ -96,6 +96,10 @@ try {
     npm_execpath: '/forbidden/inframux-bootstrap-must-not-run-npm',
   });
 
+  await run(process.execPath, [
+    path.join(repositoryRoot, 'scripts/cli-journey-smoke.mjs'), installedBin,
+  ], unrelatedCwd, runtimeEnvironment);
+
   assert.match(await run(installedBin, ['--help'], unrelatedCwd, runtimeEnvironment), /inframux/);
   const onboardingPrompt = await run(installedBin, ['prompt', 'onboarding'], unrelatedCwd, runtimeEnvironment);
   assert.match(onboardingPrompt, /Services: <ENTER COMMA-SEPARATED SERVICES>/);

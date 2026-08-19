@@ -236,7 +236,16 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
         accounts: { broker: null, worker: null },
         socketPathsExist: false,
       });
-      dependencies.writeStdout(renderResult(command.command, plan, command));
+      const applyCommand = command.mode === 'user'
+        ? 'inframux bootstrap --user-mode --apply'
+        : 'inframux bootstrap --apply';
+      dependencies.writeStdout(renderResult(command.command, withJourney({ schema: 1, ...plan }, createJourneyProjection('planned', false, [
+        createJourneyAction({
+          type: 'apply-bootstrap', actor: 'user', command: applyCommand,
+          description: 'Review the plan, then install inframux.', interactive: true,
+          privileged: command.mode === 'hardened',
+        }),
+      ])), command));
       return 0;
     }
     if (command.command === 'update') {
@@ -661,6 +670,7 @@ async function readSecret(stdin: NodeJS.ReadStream, write: (value: string) => vo
     const finish = (error?: Error) => {
       tty.off('data', onData);
       tty.setRawMode(previousRaw ?? false);
+      tty.pause();
       write('\n');
       if (error !== undefined) reject(error);
       else resolve(Buffer.from(bytes));
