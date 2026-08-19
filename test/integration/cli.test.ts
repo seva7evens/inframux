@@ -40,6 +40,20 @@ test('prints the universal onboarding prompt without a broker', async () => {
   assert.match(stdout, /Services: <ENTER COMMA-SEPARATED SERVICES>/);
 });
 
+test('prints focused nested help without connecting to the broker', async () => {
+  let stdout = '';
+  let stderr = '';
+  const exitCode = await runCli(['onboard', 'authorize', '--help'], {
+    cwd: process.cwd(), stdin: process.stdin,
+    writeStdout: (value) => { stdout += value; },
+    writeStderr: (value) => { stderr += value; },
+    environment: { INFRAMUX_CLIENT_SOCKET: '/does/not/exist.sock' },
+  });
+  assert.equal(exitCode, 0);
+  assert.equal(stderr, '');
+  assert.match(stdout, /^Usage: inframux onboard authorize <session-id>/);
+});
+
 test('starts universal onboarding from a blank Git repository and writes only a non-secret manifest', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-cli-onboard-'));
   t.after(() => rm(root, { recursive: true, force: true }));

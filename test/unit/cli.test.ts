@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { parseCli } from '../../src/cli/parse.js';
+import { renderCommandHelp, resolveCommandHelp } from '../../src/cli/command-catalog.js';
 import { renderError, renderResult } from '../../src/cli/render.js';
 import { InframuxError } from '../../src/core/errors.js';
 
@@ -109,4 +110,24 @@ test('renders concise safe status and versioned machine errors with stable exit 
     },
   });
   assert.equal(rendered.text.includes('stack'), false);
+});
+
+test('resolves nested help before validating required session identifiers', () => {
+  assert.deepEqual(parseCli(['onboard', 'authorize', '--help']), {
+    command: 'help', json: false, verbose: false,
+  });
+  const help = resolveCommandHelp(['onboard', 'authorize', '--help']);
+  assert.ok(help);
+  const text = renderCommandHelp(help);
+  assert.match(text, /^Usage: inframux onboard authorize <session-id>/m);
+  assert.match(text, /interactive Terminal/i);
+  assert.match(text, /Example:/);
+  assert.doesNotMatch(text, /Invalid request ID/);
+});
+
+test('renders goal-oriented root and trust preparation help', () => {
+  assert.match(renderCommandHelp(resolveCommandHelp([])!), /Set up a project/);
+  const trust = renderCommandHelp(resolveCommandHelp(['trust', 'prepare-checkout', '-h'])!);
+  assert.match(trust, /Usage: inframux trust prepare-checkout <session-id> \[--apply\]/);
+  assert.match(trust, /minimal directory traversal/i);
 });

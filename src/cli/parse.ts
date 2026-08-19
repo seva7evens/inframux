@@ -31,6 +31,10 @@ export type CliCommand =
   | ({ command: 'help' } & CommonCliOptions);
 
 export function parseCli(argv: readonly string[]): CliCommand {
+  if (resolveCommandHelp(argv) !== undefined) {
+    const { json, verbose } = common(argv.filter((value) => value !== '--help' && value !== '-h' && value !== 'help'));
+    return { command: 'help', json, verbose };
+  }
   const { args, json, verbose } = common(argv);
   const shared = { json, verbose };
   const [first, second, third] = args;
@@ -279,3 +283,4 @@ function uuid(value: string): string {
   }
   return value.toLowerCase();
 }
+import { resolveCommandHelp } from './command-catalog.js';

@@ -17,6 +17,7 @@ import { createProviderRegistry } from '../providers/registry.js';
 import { deriveProjectIdentity, parseServiceList } from '../onboarding/project.js';
 import { renderUniversalOnboardingPrompt } from '../integration/agent-config.js';
 import { authorizeGoogleDesktop } from './google-desktop-auth.js';
+import { renderCommandHelp, resolveCommandHelp } from './command-catalog.js';
 import { parseCli } from './parse.js';
 import { runPrivilegedHelper } from './privileged.js';
 import { renderError, renderResult } from './render.js';
@@ -37,7 +38,7 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
     const command = parseCli(argv);
     json = command.json;
     if (command.command === 'help') {
-      dependencies.writeStdout(helpText());
+      dependencies.writeStdout(renderCommandHelp(resolveCommandHelp(argv) ?? resolveCommandHelp([])!));
       return 0;
     }
     if (command.command === 'capabilities') {
@@ -607,8 +608,4 @@ async function readSecret(stdin: NodeJS.ReadStream, write: (value: string) => vo
     tty.on('data', onData);
     tty.resume();
   });
-}
-
-function helpText(): string {
-  return `inframux <command>\n\nRepository-bound commands:\n  status [--json]\n  doctor [--json]\n  project resolve\n  run <provider> -- <reviewed command>\n  call <provider> <operation> [--input-json JSON]\n  replace-token <provider>\n  reauthorize google-cloud [--oauth-client-json /absolute/file]\n  launch mcp <provider>\n  browser mcp clean|persistent --provider <provider>\n\nUniversal onboarding:\n  prompt onboarding\n  onboard start --services <comma-separated>\n  onboard configure <session> --service <provider> --input-json <json>\n  onboard reuse <session> --service <provider> --from-project <project>\n  onboard resume <session>\n  onboard authorize <session>\n  onboard finish <session>\n\nMaintenance:\n  link --project <project> <absolute-repository> [--write-manifest]\n  trust approve <request-id>\n  trust revoke <absolute-repository>\n  enroll <project> --service <provider> [--oauth-client-json /absolute/file]\n  auth status --project <project>\n  auth revoke --project <project> --service <provider>\n  capabilities <provider> [--json]\n  audit verify [--json]\n  bootstrap [--user-mode] [--apply]\n  update [--check|--rollback]\n  uninstall --dry-run\n`;
 }
