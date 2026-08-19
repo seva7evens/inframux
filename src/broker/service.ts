@@ -9,6 +9,7 @@ const PUBLIC_OPERATIONS = Object.freeze([
   'status',
   'doctor',
   'audit.verify',
+  'agent.instructions',
   'credential.enroll',
   'credential.enrollment-info',
   'credential.status',

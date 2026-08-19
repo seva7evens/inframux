@@ -405,6 +405,10 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
             brokerOperation = 'audit.verify';
             payload = checkout;
             break;
+          case 'agent-instructions':
+            brokerOperation = 'agent.instructions';
+            payload = checkout;
+            break;
           default:
             throw new InframuxError('INVALID_REQUEST', 'Command is not wired to the broker');
         }

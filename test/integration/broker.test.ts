@@ -66,6 +66,38 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
   assert.equal((await fixture.ledger.find(fixture.evidence.repositoryRoot))?.project, 'sample-app');
 });
 
+test('finishes without explicit resume and replays canonical agent instructions', async (t) => {
+  const fixture = await setupBroker(t);
+  const started = await fixture.broker.handle('onboarding.start', {
+    project: 'sample-app', displayName: 'Sample management', providers: ['synthetic'],
+    evidence: fixture.evidence, workspaceRoot: fixture.root,
+  }, fixture.context()) as { id: string };
+  await fixture.broker.handle('onboarding.configure', {
+    sessionId: started.id, provider: 'synthetic', input: { accountId: 'account-sample' },
+  }, fixture.context());
+  await assert.rejects(
+    fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()),
+    (error: unknown) => error instanceof InframuxError && error.code === 'SESSION_AUTHORIZATION_REQUIRED' &&
+      error.recovery === `inframux onboard authorize ${started.id}`,
+  );
+  await fixture.broker.handle('credential.enroll', {
+    project: 'sample-app', provider: 'synthetic', credentialType: 'administrative-token',
+    secretBase64: Buffer.from(token).toString('base64'),
+  }, fixture.context());
+
+  const first = await fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()) as {
+    complete: boolean; state: string; agentInstructions: string; nextActions: unknown[];
+  };
+  const repeated = await fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context());
+  const resumed = await fixture.broker.handle('onboarding.resume', { sessionId: started.id }, fixture.context());
+  assert.equal(first.complete, true);
+  assert.equal(first.state, 'complete');
+  assert.match(first.agentInstructions, /Available provider contexts: synthetic/);
+  assert.equal(first.nextActions.length, 3);
+  assert.deepEqual(repeated, first);
+  assert.deepEqual(resumed, first);
+});
+
 test('derives provider identity pins from non-secret onboarding configuration before authorization', async (t) => {
   const fixture = await setupBroker(t);
   const started = await fixture.broker.handle('onboarding.start', {

@@ -19,7 +19,7 @@ import type { OnboardingSessionStore } from '../onboarding/session-store.js';
 import { sanitizeServiceConfig } from '../onboarding/config.js';
 import { deriveProjectIdentity } from '../onboarding/project.js';
 import { projectOnboardingJourney } from '../onboarding/projection.js';
-import { withJourney } from '../cli/journey.js';
+import { journeyError, withJourney } from '../cli/journey.js';
 import type { TrustLedger } from '../trust/ledger.js';
 import { PendingTrustStore } from '../trust/pending.js';
 import { resolveProjectContext, validateCatalogBinding } from '../trust/resolve.js';
@@ -130,6 +130,18 @@ export class Broker {
         if (this.#audit.verify === undefined) throw new InframuxError('AUDIT_UNAVAILABLE', 'Audit verification is unavailable');
         return JSON.parse(JSON.stringify(await this.#audit.verify())) as JsonValue;
       }
+      case 'agent.instructions': {
+        const { resolved, catalog } = await this.#resolve(checkoutPayloadSchema.parse(payload));
+        return {
+          schema: 1,
+          project: resolved.project,
+          providers: Object.keys(catalog.services).sort(),
+          agentInstructions: renderAgentIntegrationGuide({
+            project: resolved.project,
+            providers: Object.keys(catalog.services),
+          }),
+        };
+      }
       case 'credential.enroll':
         return this.#enroll(enrollPayloadSchema.parse(payload), context);
       case 'onboarding.start': {
@@ -160,18 +172,9 @@ export class Broker {
       }
       case 'onboarding.resume': {
         const input = onboardingSessionPayloadSchema.parse(payload);
-        let session = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
-        for (const provider of session.providers) {
-          const service = session.services[provider];
-          if (service?.profile !== undefined || service?.config === undefined) continue;
-          const alias = typeof service.config.credential === 'string' ? service.config.credential : `${session.project}-${provider}-admin`;
-          try {
-            await this.#credentials.metadata(session.project, provider, alias);
-            session = await this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, provider, alias);
-          } catch (error) {
-            if (!(error instanceof InframuxError) || error.code !== 'CREDENTIAL_MISSING') throw error;
-          }
-        }
+        const current = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
+        if (current.completedAt !== undefined) return this.#onboardingCompletionResult(current);
+        const session = await this.#reconcileOnboarding(input.sessionId, context.callerUid);
         return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.configure': {
@@ -211,9 +214,17 @@ export class Broker {
       }
       case 'onboarding.finish': {
         const input = onboardingSessionPayloadSchema.parse(payload);
-        const session = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
+        const current = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
+        if (current.completedAt !== undefined) return this.#onboardingCompletionResult(current);
+        const session = await this.#reconcileOnboarding(input.sessionId, context.callerUid);
         const incomplete = session.providers.filter((provider) => session.services[provider]?.profile === undefined);
-        if (incomplete.length > 0) throw new Error(`Cannot complete onboarding; incomplete providers: ${incomplete.join(', ')}`);
+        if (incomplete.length > 0) {
+          throw journeyError(
+            'SESSION_AUTHORIZATION_REQUIRED',
+            `Cannot complete onboarding; incomplete providers: ${incomplete.join(', ')}`,
+            projectOnboardingJourney(session, this.#providers, 'ready'),
+          );
+        }
         await this.#enrollSessionCatalog(session);
         await this.#ledger.approve({
           schema: 1, project: session.project, repositoryRoot: session.evidence.repositoryRoot,
@@ -222,7 +233,7 @@ export class Broker {
           approvedAt: new Date().toISOString(),
         });
         const completed = await this.#requireOnboarding().complete(input.sessionId, context.callerUid);
-        return { schema: 1, complete: true, project: completed.project, providers: completed.providers };
+        return this.#onboardingCompletionResult(completed);
       }
       case 'credential.enrollment-info':
         return this.#credentialEnrollmentInfo(credentialEnrollmentInfoPayloadSchema.parse(payload));
@@ -290,6 +301,31 @@ export class Broker {
   #requireOnboarding(): OnboardingSessionStore {
     if (this.#onboarding === undefined) throw new InframuxError('INVALID_REQUEST', 'Universal onboarding is unavailable');
     return this.#onboarding;
+  }
+
+  async #reconcileOnboarding(sessionId: string, callerUid: number) {
+    let session = await this.#requireOnboarding().get(sessionId, callerUid);
+    for (const provider of session.providers) {
+      const service = session.services[provider];
+      if (service?.profile !== undefined || service?.config === undefined) continue;
+      const alias = typeof service.config.credential === 'string' ? service.config.credential : `${session.project}-${provider}-admin`;
+      try {
+        await this.#credentials.metadata(session.project, provider, alias);
+        session = await this.#requireOnboarding().markVerified(sessionId, callerUid, provider, alias);
+      } catch (error) {
+        if (!(error instanceof InframuxError) || error.code !== 'CREDENTIAL_MISSING') throw error;
+      }
+    }
+    return session;
+  }
+
+  #onboardingCompletionResult(session: Awaited<ReturnType<OnboardingSessionStore['get']>>): JsonValue {
+    return withJourney({
+      schema: 1,
+      project: session.project,
+      providers: session.providers,
+      agentInstructions: renderAgentIntegrationGuide({ project: session.project, providers: session.providers }),
+    }, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
   }
 
   async #enrollSessionCatalog(session: Awaited<ReturnType<OnboardingSessionStore['get']>>): Promise<void> {

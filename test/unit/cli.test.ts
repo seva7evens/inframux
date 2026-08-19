@@ -44,6 +44,7 @@ test('parses explicit onboarding, MCP, browser, audit, lifecycle, and capability
     command: 'onboard.reuse', sessionId: '018f47d2-8737-7a19-8000-123456789abc', provider: 'vercel', sourceProject: 'shared-infra', json: false, verbose: false,
   });
   assert.deepEqual(parseCli(['prompt', 'onboarding']), { command: 'prompt.onboarding', json: false, verbose: false });
+  assert.deepEqual(parseCli(['agent-instructions', '--json']), { command: 'agent-instructions', json: true, verbose: false });
   assert.deepEqual(parseCli(['enroll', 'sample', '--service', 'cloudflare']), {
     command: 'enroll', project: 'sample', provider: 'cloudflare', json: false, verbose: false,
   });

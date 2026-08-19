@@ -28,6 +28,7 @@ export type CliCommand =
   | ({ command: 'onboard.resume' | 'onboard.finish'; sessionId: string } & CommonCliOptions)
   | ({ command: 'onboard.authorize'; sessionId: string; oauthClientJson?: string } & CommonCliOptions)
   | ({ command: 'prompt.onboarding' } & CommonCliOptions)
+  | ({ command: 'agent-instructions' } & CommonCliOptions)
   | ({ command: 'help' } & CommonCliOptions);
 
 export function parseCli(argv: readonly string[]): CliCommand {
@@ -128,6 +129,9 @@ export function parseCli(argv: readonly string[]): CliCommand {
       if (second !== 'onboarding') throw new Error('Unknown prompt command');
       noExtra(args, 2);
       return { command: 'prompt.onboarding', ...shared };
+    case 'agent-instructions':
+      noExtra(args, 1);
+      return { command: 'agent-instructions', ...shared };
     case 'launch':
       if (second !== 'mcp') throw new Error('Unknown launch command');
       noExtra(args, 3);
