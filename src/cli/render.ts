@@ -1,30 +1,23 @@
 import { InframuxError, asInframuxError, type ErrorCode } from '../core/errors.js';
 import { journeyFromError } from './journey.js';
 import { renderOnboardingHuman } from './onboarding-ui.js';
+import { renderOperationalHuman } from './operations-ui.js';
 
 export function renderResult(command: string, result: unknown, options: { json: boolean; verbose: boolean }): string {
-  if (options.json) return `${JSON.stringify(result, null, 2)}\n`;
+  if (options.json) return `${JSON.stringify(machineResult(result), null, 2)}\n`;
   if (command.startsWith('onboard.')) return renderOnboardingHuman(command, result, { unicode: true });
   if (command === 'agent-instructions') return `${(result as { agentInstructions: string }).agentInstructions}\n`;
-  if (command !== 'status') return `${JSON.stringify(result, null, options.verbose ? 2 : 0)}\n`;
-  const status = result as {
-    project: string; securityMode: string; checkoutApproved: boolean; repository: string;
-    providers: Array<{ id: string; health: string; identity?: Record<string, string> }>;
-  };
-  const lines = [
-    `${status.project} · ${status.securityMode} · checkout ${status.checkoutApproved ? 'approved' : 'not approved'}`,
-    ...status.providers.map((provider) => {
-      const identity = provider.identity === undefined ? '' : ` · ${Object.values(provider.identity).join(' / ')}`;
-      return `${provider.id} · ${provider.health}${identity}`;
-    }),
-  ];
-  if (options.verbose) lines.splice(1, 0, `repository · ${status.repository}`);
-  return `${lines.join('\n')}\n`;
+  return renderOperationalHuman(command, result, { unicode: true, verbose: options.verbose });
 }
 
 export function renderError(error: unknown, json: boolean): { text: string; exitCode: number } {
   const normalized = error instanceof InframuxError ? error : asInframuxError(error instanceof Error ? error : new Error('Unknown error'));
   const journey = journeyFromError(normalized);
+  const fallbackAction = {
+    type: 'recover', actor: 'agent' as const,
+    command: normalized.recovery ?? 'inframux --help',
+    description: `Recover from ${normalized.code}.`, interactive: false, privileged: false,
+  };
   const body = {
     schema: 1,
     error: {
@@ -32,12 +25,19 @@ export function renderError(error: unknown, json: boolean): { text: string; exit
       message: normalized.message,
       ...(normalized.recovery === undefined ? {} : { recovery: normalized.recovery }),
     },
-    ...(journey === undefined ? {} : journey),
+    ...(journey ?? { state: 'failed', complete: false, nextActions: [fallbackAction] }),
   };
   const text = json
     ? JSON.stringify(body, null, 2)
     : `${normalized.code}: ${normalized.message}${normalized.recovery === undefined ? '' : `\nRecovery: ${normalized.recovery}`}`;
   return { text, exitCode: exitCodeFor(normalized.code) };
+}
+
+function machineResult(result: unknown): unknown {
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  if (typeof record.state === 'string' && typeof record.complete === 'boolean' && Array.isArray(record.nextActions)) return result;
+  return { ...record, state: 'complete', complete: true, nextActions: [] };
 }
 
 function exitCodeFor(code: ErrorCode): number {

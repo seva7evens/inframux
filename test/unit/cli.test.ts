@@ -100,7 +100,9 @@ test('renders concise safe status and versioned machine errors with stable exit 
   };
   assert.match(renderResult('status', status, { json: false, verbose: false }), /sample · hardened · checkout approved/);
   assert.match(renderResult('status', status, { json: false, verbose: false }), /vercel · healthy/);
-  assert.deepEqual(JSON.parse(renderResult('status', status, { json: true, verbose: false })), status);
+  assert.deepEqual(JSON.parse(renderResult('status', status, { json: true, verbose: false })), {
+    ...status, state: 'complete', complete: true, nextActions: [],
+  });
 
   const rendered = renderError(new InframuxError('CHECKOUT_NOT_APPROVED', 'Exact checkout is not approved', {
     recovery: 'inframux trust approve request-123',
@@ -113,6 +115,12 @@ test('renders concise safe status and versioned machine errors with stable exit 
       message: 'Exact checkout is not approved',
       recovery: 'inframux trust approve request-123',
     },
+    state: 'failed',
+    complete: false,
+    nextActions: [{
+      type: 'recover', actor: 'agent', command: 'inframux trust approve request-123',
+      description: 'Recover from CHECKOUT_NOT_APPROVED.', interactive: false, privileged: false,
+    }],
   });
   assert.equal(rendered.text.includes('stack'), false);
 });

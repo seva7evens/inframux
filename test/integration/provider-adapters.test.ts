@@ -66,7 +66,18 @@ test('verifies every static provider against exact catalog identity and resource
     {
       provider: 'uptimerobot',
       service: { credential: 'uptime-admin', monitors: ['100000001', '100000002'] },
-      identity: { accountFingerprint: 'monitors:100000001,100000002' },
+      identity: {
+        resourceFingerprint: 'sha256:36045807e5fec6c4c4d034de859b3e8d3f34c91b57e0190345be6d4004d82978',
+        monitorCount: '2',
+      },
+    },
+    {
+      provider: 'uptimerobot',
+      service: { credential: 'uptime-empty-admin', monitors: [] },
+      identity: {
+        resourceFingerprint: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        monitorCount: '2',
+      },
     },
     {
       provider: 'resend',

@@ -145,7 +145,7 @@ test('derives provider identity pins from non-secret onboarding configuration be
     project: 'sample-app', provider: 'uptimerobot',
   }, fixture.context()), {
     schema: 1, project: 'sample-app', provider: 'uptimerobot',
-    expectedIdentity: { accountFingerprint: 'monitors:100000001,200000002' }, scopes: [],
+    expectedIdentity: { resourceFingerprint: 'sha256:7fa6f7411457d2b8d30dbbdd6d62e999ba3e240ddbc2f4c6c8d5019937c5df98' }, scopes: [],
   });
 });
 
