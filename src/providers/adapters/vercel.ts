@@ -5,11 +5,19 @@ import type { ApiRequestInput, HttpTransport } from '../http-transport.js';
 import { assertFound, bearer, genericApiCall } from './shared.js';
 import type { ProviderAdapter } from './types.js';
 
-const projectSchema = z.object({ id: z.string(), name: z.string(), productionDomain: z.string() }).passthrough();
+const projectSchema = z.object({
+  id: z.string().min(1), name: z.string().min(1).optional(), productionDomain: z.string().min(1).optional(),
+}).passthrough();
+const projectsSchema = z.union([
+  z.record(z.string(), projectSchema),
+  z.array(z.string().min(1)),
+]).transform((projects): Record<string, z.infer<typeof projectSchema>> => Array.isArray(projects)
+  ? Object.fromEntries(projects.map((id) => [id, { id }]))
+  : projects);
 const serviceSchema = z.object({
   user: z.string().min(1).optional(),
   teamId: z.string().min(1),
-  projects: z.record(z.string(), projectSchema).default({}),
+  projects: projectsSchema.default({}),
 }).passthrough();
 
 export function vercelAdapter(transport: HttpTransport, origin: string): ProviderAdapter {
@@ -32,14 +40,21 @@ export function vercelAdapter(transport: HttpTransport, origin: string): Provide
           origin, method: 'GET', path: `/v9/projects/${encodeURIComponent(expected.id)}`,
           query: { teamId: service.teamId }, headers, signal: context.signal,
         })).body);
-        assertFound(project.id === expected.id && project.name === expected.name, 'Vercel', `project ${expected.id}`);
+        assertFound(project.id === expected.id, 'Vercel', `project ${expected.id}`);
+        if (expected.name !== undefined) assertFound(project.name === expected.name, 'Vercel', `project ${expected.id}`);
         if (project.accountId !== undefined) assertFound(project.accountId === service.teamId, 'Vercel', `project team ${service.teamId}`);
         const domains = z.object({ domains: z.array(z.object({ name: z.string(), verified: z.boolean().optional() }).passthrough()) }).passthrough().parse((await transport.request({
           origin, method: 'GET', path: `/v9/projects/${encodeURIComponent(expected.id)}/domains`,
           query: { teamId: service.teamId }, headers, signal: context.signal,
         })).body).domains;
-        assertFound(domains.some((domain) => domain.name === expected.productionDomain), 'Vercel', `production domain ${expected.productionDomain}`);
-        resources.push(expected);
+        if (expected.productionDomain !== undefined) {
+          assertFound(domains.some((domain) => domain.name === expected.productionDomain), 'Vercel', `production domain ${expected.productionDomain}`);
+        }
+        resources.push({
+          id: project.id,
+          name: project.name,
+          productionDomain: expected.productionDomain ?? domains.find((domain) => domain.verified !== false)?.name ?? '',
+        });
       }
       return {
         identity: Object.freeze({ teamId: service.teamId, ...(service.user === undefined ? {} : { user: service.user }) }),

@@ -21,10 +21,10 @@ export const uptimeRobotProvider: ProviderDefinition = {
     operation: 'identity.verify', expectedFields: ['accountFingerprint'], maxAgeMs: 86_400_000,
     deriveExpected: (service) => {
       const monitors = service.monitors ?? {};
-      if (monitors === null || typeof monitors !== 'object' || Array.isArray(monitors)) {
-        throw new Error('UptimeRobot monitors must be an object');
+      if (monitors === null || typeof monitors !== 'object') {
+        throw new Error('UptimeRobot monitors must be an object or array');
       }
-      const ids = Object.values(monitors).map((value) => {
+      const ids = (Array.isArray(monitors) ? monitors : Object.values(monitors)).map((value) => {
         if (typeof value !== 'string' || value.length === 0) throw new Error('UptimeRobot monitor IDs must be non-empty strings');
         return value;
       }).sort();

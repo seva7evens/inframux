@@ -4,9 +4,16 @@ import type { HttpTransport } from '../http-transport.js';
 import { assertFound, bearer, genericApiCall } from './shared.js';
 import type { ProviderAdapter } from './types.js';
 
+const projectSchema = z.object({ ref: z.string().min(1), name: z.string().min(1).optional() }).passthrough();
+const projectsSchema = z.union([
+  z.record(z.string(), projectSchema),
+  z.array(z.string().min(1)),
+]).transform((projects): Record<string, z.infer<typeof projectSchema>> => Array.isArray(projects)
+  ? Object.fromEntries(projects.map((ref) => [ref, { ref }]))
+  : projects);
 const serviceSchema = z.object({
   organizationId: z.string().min(1),
-  projects: z.record(z.string(), z.object({ ref: z.string(), name: z.string() }).passthrough()).default({}),
+  projects: projectsSchema.default({}),
 }).passthrough();
 
 export function supabaseAdapter(transport: HttpTransport, origin: string): ProviderAdapter {
@@ -25,7 +32,9 @@ export function supabaseAdapter(transport: HttpTransport, origin: string): Provi
         origin, method: 'GET', path: '/v1/projects', headers, signal: context.signal,
       })).body);
       for (const expected of Object.values(service.projects)) {
-        assertFound(projects.some((item) => item.ref === expected.ref && item.name === expected.name && item.organization_id === service.organizationId), 'Supabase', `project ${expected.ref}`);
+        assertFound(projects.some((item) => item.ref === expected.ref
+          && item.organization_id === service.organizationId
+          && (expected.name === undefined || item.name === expected.name)), 'Supabase', `project ${expected.ref}`);
       }
       return {
         identity: Object.freeze({ organizationId: service.organizationId }),

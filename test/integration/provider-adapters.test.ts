@@ -43,7 +43,7 @@ test('verifies every static provider against exact catalog identity and resource
       provider: 'vercel',
       service: {
         credential: 'vercel-admin', user: 'samplebot-4021', teamId: 'vercel-team',
-        projects: { admin: { id: 'vercel-project', name: 'sample-admin-panel', productionDomain: 'app.example.test' } },
+        projects: ['vercel-project'],
       },
       identity: { teamId: 'vercel-team', user: 'samplebot-4021' },
     },
@@ -51,7 +51,7 @@ test('verifies every static provider against exact catalog identity and resource
       provider: 'supabase',
       service: {
         credential: 'supabase-admin', organizationId: 'supabase-org',
-        projects: { admin: { ref: 'supabase-project', name: 'sample_admin_panel' } },
+        projects: ['supabase-project'],
       },
       identity: { organizationId: 'supabase-org' },
     },
@@ -65,7 +65,7 @@ test('verifies every static provider against exact catalog identity and resource
     },
     {
       provider: 'uptimerobot',
-      service: { credential: 'uptime-admin', monitors: { website: '100000001', admin: '100000002' } },
+      service: { credential: 'uptime-admin', monitors: ['100000001', '100000002'] },
       identity: { accountFingerprint: 'monitors:100000001,100000002' },
     },
     {

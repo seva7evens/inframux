@@ -72,3 +72,10 @@ identity verification.
   canonical normalization. Both spellings and omitted legacy configuration are
   accepted, but stored and verified identity metadata always uses the official
   `full_access` value.
+- Live onboarding then exposed an ambiguous collection shape: agents naturally
+  supplied arrays of Supabase project refs, Vercel project IDs, and UptimeRobot
+  monitor IDs, while the adapters accepted only richer named records. Captured
+  each failure in sequence and added backward-compatible array shorthand.
+  Rich records still enforce optional names and production domains; shorthand
+  still verifies every ID against the pinned organization or team and returns
+  provider-discovered resource metadata.

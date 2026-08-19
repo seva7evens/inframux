@@ -4,7 +4,13 @@ import type { HttpTransport } from '../http-transport.js';
 import { assertFound, bearer, genericApiCall } from './shared.js';
 import type { ProviderAdapter } from './types.js';
 
-const serviceSchema = z.object({ monitors: z.record(z.string(), z.string().min(1)).default({}) }).passthrough();
+const monitorsSchema = z.union([
+  z.record(z.string(), z.string().min(1)),
+  z.array(z.string().min(1)),
+]).transform((monitors) => Array.isArray(monitors)
+  ? Object.fromEntries(monitors.map((id) => [id, id]))
+  : monitors);
+const serviceSchema = z.object({ monitors: monitorsSchema.default({}) }).passthrough();
 
 export function uptimeRobotAdapter(transport: HttpTransport, origin: string): ProviderAdapter {
   return {
