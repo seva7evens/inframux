@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { assertSafeRegularFile, atomicWritePrivateFile } from '../core/safe-files.js';
+import { InframuxError } from '../core/errors.js';
 import { KeyedLock } from '../security/locks.js';
 
 const id = z.string().uuid();
@@ -70,7 +71,11 @@ export class OnboardingSessionStore {
       const current = session.services[provider]?.config;
       if (current !== undefined) {
         if (JSON.stringify(current) === JSON.stringify(config)) return session;
-        throw new Error(`Provider is already configured: ${provider}`);
+        if (session.services[provider]?.profile !== undefined) {
+          throw new InframuxError('PROVIDER_ALREADY_VERIFIED', `Provider is already verified: ${provider}`, {
+            recovery: `inframux auth status --project ${session.project}`,
+          });
+        }
       }
       return { ...session, services: { ...session.services, [provider]: { config: structuredClone(config) } } };
     });

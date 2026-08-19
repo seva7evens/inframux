@@ -43,6 +43,8 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
   assert.deepEqual(started.plan.map(({ id, auth, requiredConfig }) => ({ id, auth, requiredConfig })), [
     { id: 'synthetic', auth: 'static-token', requiredConfig: ['accountId'] },
   ]);
+  assert.equal((started as unknown as { state: string }).state, 'configuration-required');
+  assert.match((started as unknown as { nextActions: Array<{ command: string }> }).nextActions[0]!.command, /onboard configure/);
   await assert.rejects(fixture.broker.handle('onboarding.status', { sessionId: started.id }, {
     callerUid: fixture.context().callerUid + 1, signal: new AbortController().signal,
   }), /different user/i);
@@ -50,6 +52,7 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
     sessionId: started.id, provider: 'synthetic', input: { accountId: 'account-sample' },
   }, fixture.context()) as { services: Record<string, { config?: unknown }> };
   assert.deepEqual(configured.services.synthetic?.config, { credential: 'sample-app-synthetic-admin', accountId: 'account-sample' });
+  assert.equal((configured as unknown as { state: string }).state, 'authorization-required');
   await fixture.broker.handle('credential.enroll', {
     project: 'sample-app', provider: 'synthetic', credentialType: 'administrative-token',
     secretBase64: Buffer.from(token).toString('base64'),

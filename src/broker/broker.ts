@@ -18,6 +18,8 @@ import type { EnrolledCatalogStore } from '../trust/catalog-store.js';
 import type { OnboardingSessionStore } from '../onboarding/session-store.js';
 import { sanitizeServiceConfig } from '../onboarding/config.js';
 import { deriveProjectIdentity } from '../onboarding/project.js';
+import { projectOnboardingJourney } from '../onboarding/projection.js';
+import { withJourney } from '../cli/journey.js';
 import type { TrustLedger } from '../trust/ledger.js';
 import { PendingTrustStore } from '../trust/pending.js';
 import { resolveProjectContext, validateCatalogBinding } from '../trust/resolve.js';
@@ -140,7 +142,7 @@ export class Broker {
           evidence: { ...input.evidence, normalizedRemotes: [...input.evidence.normalizedRemotes] },
           workspaceRoot: input.workspaceRoot, providers: input.providers,
         });
-        return {
+        return withJourney({
           schema: 1, id: session.id, project: session.project,
           plan: session.providers.map((id) => {
             const onboarding = this.#providers.require(id).onboarding;
@@ -149,11 +151,12 @@ export class Broker {
               documentationUrl: onboarding.documentationUrl };
           }),
           next: `inframux onboard configure ${session.id} --service <provider> --input-json '<non-secret-json>'`,
-        };
+        }, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.status': {
         const input = onboardingSessionPayloadSchema.parse(payload);
-        return this.#requireOnboarding().get(input.sessionId, context.callerUid) as unknown as JsonValue;
+        const session = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
+        return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.resume': {
         const input = onboardingSessionPayloadSchema.parse(payload);
@@ -169,7 +172,7 @@ export class Broker {
             if (!(error instanceof InframuxError) || error.code !== 'CREDENTIAL_MISSING') throw error;
           }
         }
-        return session as unknown as JsonValue;
+        return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.configure': {
         const input = onboardingConfigurePayloadSchema.parse(payload);
@@ -179,7 +182,7 @@ export class Broker {
           ...config, credential: `${current.project}-${input.provider}-admin`,
         });
         await this.#enrollSessionCatalog(session);
-        return session as unknown as JsonValue;
+        return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.provider-verified': {
         const input = onboardingVerifiedPayloadSchema.parse(payload);
@@ -188,7 +191,8 @@ export class Broker {
         if (config === undefined) throw new Error(`Provider is not configured: ${input.provider}`);
         const alias = typeof config.credential === 'string' ? config.credential : input.provider;
         await this.#credentials.metadata(session.project, input.provider, alias);
-        return this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, input.provider, input.profile) as unknown as JsonValue;
+        const verified = await this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, input.provider, input.profile);
+        return withJourney(verified, projectOnboardingJourney(verified, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.reuse': {
         const input = onboardingReusePayloadSchema.parse(payload);
@@ -202,7 +206,8 @@ export class Broker {
           sourceProject: input.sourceProject, sourceAlias: `${input.sourceProject}-${input.provider}-admin`,
           targetProject: session.project, targetAlias, provider: input.provider, expectedIdentity,
         });
-        return this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, input.provider, targetAlias) as unknown as JsonValue;
+        const verified = await this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, input.provider, targetAlias);
+        return withJourney(verified, projectOnboardingJourney(verified, this.#providers, 'ready')) as unknown as JsonValue;
       }
       case 'onboarding.finish': {
         const input = onboardingSessionPayloadSchema.parse(payload);
