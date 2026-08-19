@@ -29,11 +29,18 @@ const COMMANDS: readonly CommandHelp[] = Object.freeze([
 export function resolveCommandHelp(argv: readonly string[]): CommandHelp | undefined {
   const requested = argv.length === 0 || argv.some((value) => value === '--help' || value === '-h' || value === 'help');
   if (!requested) return undefined;
-  const path = argv
-    .slice(0, argv.findIndex((value) => value === '--help' || value === '-h' || value === 'help') < 0 ? 0 : argv.findIndex((value) => value === '--help' || value === '-h' || value === 'help'))
-    .filter((value) => !value.startsWith('-'));
+  const helpIndex = argv.findIndex((value) => value === '--help' || value === '-h' || value === 'help');
+  return resolveNearestCommandHelp(helpIndex < 0 ? [] : argv.slice(0, helpIndex));
+}
+
+export function resolveNearestCommandHelp(argv: readonly string[]): CommandHelp {
+  const path = argv.filter((value) => !value.startsWith('-'));
   const matches = COMMANDS.filter((candidate) => candidate.path.every((part, index) => path[index] === part));
-  return matches.sort((left, right) => right.path.length - left.path.length)[0] ?? COMMANDS[0];
+  return matches.sort((left, right) => right.path.length - left.path.length)[0] ?? COMMANDS[0]!;
+}
+
+export function helpCommand(help: CommandHelp): string {
+  return help.path.length === 0 ? 'inframux --help' : `inframux ${help.path.join(' ')} --help`;
 }
 
 export function renderCommandHelp(help: CommandHelp): string {

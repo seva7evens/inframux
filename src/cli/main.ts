@@ -17,7 +17,7 @@ import { createProviderRegistry } from '../providers/registry.js';
 import { deriveProjectIdentity, parseServiceList } from '../onboarding/project.js';
 import { renderUniversalOnboardingPrompt } from '../integration/agent-config.js';
 import { authorizeGoogleDesktop } from './google-desktop-auth.js';
-import { renderCommandHelp, resolveCommandHelp } from './command-catalog.js';
+import { helpCommand, renderCommandHelp, resolveCommandHelp, resolveNearestCommandHelp } from './command-catalog.js';
 import { parseCli } from './parse.js';
 import { runPrivilegedHelper } from './privileged.js';
 import { renderError, renderResult } from './render.js';
@@ -38,10 +38,20 @@ export interface CliDependencies {
 }
 
 export async function runCli(argv: readonly string[], dependencies: CliDependencies): Promise<number> {
-  let json = false;
+  let json = argv.includes('--json');
+  let parsed = false;
   try {
     const release = resolvePackageRoot(import.meta.url);
-    const command = parseCli(argv);
+    const parsedCommand = parseCli(argv);
+    parsed = true;
+    const command = Object.assign(parsedCommand, {
+      unicode: detectTerminalCapabilities({
+        isTTY: dependencies.stdoutIsTTY ?? false,
+        environment: dependencies.environment,
+        ...(dependencies.terminalColumns === undefined ? {} : { columns: dependencies.terminalColumns }),
+        json: parsedCommand.json,
+      }).unicode,
+    });
     json = command.json;
     if (command.command === 'help') {
       dependencies.writeStdout(renderCommandHelp(resolveCommandHelp(argv) ?? resolveCommandHelp([])!));
@@ -145,16 +155,20 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
           const secret = await readSecret(dependencies.stdin, dependencies.writeStderr);
           try {
             progress.start(`Verifying ${provider.displayName} credentials…`);
+            let credentialSaved = false;
             try {
               await client.call('credential.enroll', {
                 project: session.project, provider: providerId, credentialType: 'administrative-token',
                 secretBase64: secret.toString('base64'),
               });
+              credentialSaved = true;
               const alias = typeof service.config.credential === 'string' ? service.config.credential : `${providerId}-admin`;
               await client.call('onboarding.provider-verified', { sessionId: command.sessionId, provider: providerId, profile: alias });
               progress.succeed(`${provider.displayName} connected`);
             } catch (error) {
-              progress.fail(`${provider.displayName} could not be verified; the credential was not saved`);
+              progress.fail(credentialSaved
+                ? `${provider.displayName} credential was saved; run inframux onboard finish ${command.sessionId} to reconcile`
+                : `${provider.displayName} could not be verified; the credential was not saved`);
               throw error;
             }
           } finally { secret.fill(0); }
@@ -494,8 +508,12 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
       client.close();
     }
   } catch (error) {
-    const rendered = renderError(error, json);
-    dependencies.writeStderr(`${rendered.text}\n`);
+    const normalized = parsed ? error : new InframuxError('INVALID_REQUEST', 'Invalid command syntax.', {
+      recovery: helpCommand(resolveNearestCommandHelp(argv)),
+    });
+    const rendered = renderError(normalized, json);
+    if (json) dependencies.writeStdout(`${rendered.text}\n`);
+    else dependencies.writeStderr(`${rendered.text}\n`);
     return rendered.exitCode;
   }
 }

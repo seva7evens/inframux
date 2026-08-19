@@ -40,4 +40,12 @@ test('renders capability, checkout preview, and maintenance outcomes as actions'
   }, { unicode: false, verbose: false });
   assert.match(bootstrap, /inframux 0.1.0 installed/);
   assert.match(bootstrap, /Mode: hardened/);
+
+  const bootstrapPreview = renderOperationalHuman('bootstrap', {
+    schema: 1, mode: 'hardened', state: 'planned', complete: false,
+    nextActions: [{ actor: 'user', command: 'inframux bootstrap --apply' }],
+  }, { unicode: false, verbose: false });
+  assert.match(bootstrapPreview, /bootstrap plan ready/i);
+  assert.doesNotMatch(bootstrapPreview, /bootstrap complete/i);
+  assert.match(bootstrapPreview, /inframux bootstrap --apply/);
 });

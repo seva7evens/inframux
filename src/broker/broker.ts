@@ -185,14 +185,14 @@ export class Broker {
       case 'onboarding.status': {
         const input = onboardingSessionPayloadSchema.parse(payload);
         const session = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
-        return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
+        return this.#onboardingSessionResult(session);
       }
       case 'onboarding.resume': {
         const input = onboardingSessionPayloadSchema.parse(payload);
         const current = await this.#requireOnboarding().get(input.sessionId, context.callerUid);
         if (current.completedAt !== undefined) return this.#onboardingCompletionResult(current);
         const session = await this.#reconcileOnboarding(input.sessionId, context.callerUid);
-        return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
+        return this.#onboardingSessionResult(session);
       }
       case 'onboarding.configure': {
         const input = onboardingConfigurePayloadSchema.parse(payload);
@@ -202,7 +202,7 @@ export class Broker {
           ...config, credential: `${current.project}-${input.provider}-admin`,
         });
         await this.#enrollSessionCatalog(session);
-        return withJourney(session, projectOnboardingJourney(session, this.#providers, 'ready')) as unknown as JsonValue;
+        return this.#onboardingSessionResult(session);
       }
       case 'onboarding.provider-verified': {
         const input = onboardingVerifiedPayloadSchema.parse(payload);
@@ -212,7 +212,7 @@ export class Broker {
         const alias = typeof config.credential === 'string' ? config.credential : input.provider;
         await this.#credentials.metadata(session.project, input.provider, alias);
         const verified = await this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, input.provider, input.profile);
-        return withJourney(verified, projectOnboardingJourney(verified, this.#providers, 'ready')) as unknown as JsonValue;
+        return this.#onboardingSessionResult(verified);
       }
       case 'onboarding.reuse': {
         const input = onboardingReusePayloadSchema.parse(payload);
@@ -227,7 +227,7 @@ export class Broker {
           targetProject: session.project, targetAlias, provider: input.provider, expectedIdentity,
         });
         const verified = await this.#requireOnboarding().markVerified(input.sessionId, context.callerUid, input.provider, targetAlias);
-        return withJourney(verified, projectOnboardingJourney(verified, this.#providers, 'ready')) as unknown as JsonValue;
+        return this.#onboardingSessionResult(verified);
       }
       case 'onboarding.finish': {
         const input = onboardingSessionPayloadSchema.parse(payload);
@@ -342,6 +342,16 @@ export class Broker {
       }
     }
     return session;
+  }
+
+  async #onboardingSessionResult(
+    session: Awaited<ReturnType<OnboardingSessionStore['get']>>,
+  ): Promise<JsonValue> {
+    const access = await this.#checkoutAccess(session.evidence.repositoryRoot, session.evidence.gitCommonDir);
+    return withJourney(
+      session,
+      projectOnboardingJourney(session, this.#providers, access.ready ? 'ready' : 'required'),
+    ) as unknown as JsonValue;
   }
 
   #onboardingCompletionResult(session: Awaited<ReturnType<OnboardingSessionStore['get']>>): JsonValue {

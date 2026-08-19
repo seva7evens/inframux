@@ -50,8 +50,9 @@ test('runs the compiled CLI through separate broker and worker processes with tw
     }
     const status = await system.run(project, ['status', '--json']);
     assert.equal(status.code, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout).project, `e2e-${project}`);
-    assert.match(status.stdout, new RegExp(`account-${project}`));
+    const statusResult = JSON.parse(status.stdout);
+    assert.equal(statusResult.project, `e2e-${project}`);
+    assert.match(JSON.stringify(statusResult), new RegExp(`account-${project}`));
     if (project === 'alpha') {
       const resumed = await system.run(project, ['onboard', 'resume', session.id, '--json']);
       assert.equal(resumed.code, 0, resumed.stderr);
@@ -130,6 +131,8 @@ test('runs the compiled CLI through separate broker and worker processes with tw
   assert.equal(revoked.code, 0, revoked.stderr);
   const missingAfterRevoke = await system.run('alpha', ['call', 'synthetic', 'resources.list', '--input-json', '{}', '--json']);
   assert.equal(missingAfterRevoke.code, 30, missingAfterRevoke.stderr);
+  assert.equal(missingAfterRevoke.stderr, '');
+  assert.equal(JSON.parse(missingAfterRevoke.stdout).error.code, 'CREDENTIAL_MISSING');
   const betaAfterAlphaRevoke = await system.run('beta', ['call', 'synthetic', 'resources.list', '--input-json', '{}', '--json']);
   assert.equal(betaAfterAlphaRevoke.code, 0, betaAfterAlphaRevoke.stderr);
 
@@ -137,6 +140,8 @@ test('runs the compiled CLI through separate broker and worker processes with tw
   await cp(system.repositories.alpha, copied, { recursive: true });
   const copiedResult = await system.runAt(copied, ['status', '--json']);
   assert.equal(copiedResult.code, 12, copiedResult.stderr);
+  assert.equal(copiedResult.stderr, '');
+  assert.equal(JSON.parse(copiedResult.stdout).error.code, 'CHECKOUT_NOT_APPROVED');
 
   const audit = await system.run('alpha', ['audit', 'verify', '--json']);
   assert.equal(audit.code, 0, audit.stderr);

@@ -83,7 +83,8 @@ export interface ManagementSystem {
   probeServices(targetRoot: string): Promise<boolean>;
   stopServices(): Promise<void>;
   removeInstallation(targetRoot: string): Promise<void>;
-  grantCheckoutAccess(ancestors: readonly string[]): Promise<void>;
+  grantCheckoutAccess(targetRoot: string, ancestors: readonly string[], sessionId: string): Promise<void>;
+  revokeOwnedCheckoutAccess(targetRoot: string): Promise<void>;
 }
 
 export async function writeManagementRequest(filename: string, requestInput: BootstrapManagementRequest): Promise<void> {
@@ -221,6 +222,7 @@ export async function applyHardenedUninstall(
 ): Promise<{ readonly schema: 1; readonly uninstalled: true; readonly preserved: readonly string[] }> {
   if (request.operation !== 'uninstall') throw new Error('Uninstall management request is invalid');
   validateMaintenanceTarget(request.targetRoot);
+  await system.revokeOwnedCheckoutAccess(request.targetRoot);
   await system.stopServices();
   await system.removeInstallation(request.targetRoot);
   return Object.freeze({
@@ -236,6 +238,9 @@ export async function applyCheckoutAccess(
 ): Promise<{ readonly schema: 1; readonly prepared: true; readonly principal: '_inframux'; readonly ancestors: readonly string[] }> {
   checkoutAccessRequestSchema.parse(request);
   validateMaintenanceTarget(request.targetRoot);
+  if (request.targetRoot !== '/Library/Application Support/inframux') {
+    throw new Error('Checkout access requires the standard hardened install root');
+  }
   const ancestors: string[] = [];
   for (const candidate of request.ancestors) {
     const ancestor = path.resolve(candidate);
@@ -249,7 +254,7 @@ export async function applyCheckoutAccess(
     ancestors.push(ancestor);
   }
   const unique = Object.freeze([...new Set(ancestors)]);
-  await system.grantCheckoutAccess(unique);
+  await system.grantCheckoutAccess(request.targetRoot, unique, request.sessionId);
   return Object.freeze({ schema: 1, prepared: true, principal: '_inframux', ancestors: unique });
 }
 

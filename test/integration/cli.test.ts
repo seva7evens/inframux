@@ -55,6 +55,35 @@ test('prints focused nested help without connecting to the broker', async () => 
   assert.match(stdout, /^Usage: inframux onboard authorize <session-id>/);
 });
 
+test('returns one actionable JSON document for invalid nested syntax', async () => {
+  let stdout = ''; let stderr = '';
+  const exitCode = await runCli(['onboard', 'authorize', 'not-a-session', '--json'], {
+    cwd: process.cwd(), stdin: process.stdin,
+    writeStdout: (value) => { stdout += value; }, writeStderr: (value) => { stderr += value; },
+    environment: {},
+  });
+  assert.equal(exitCode, 64);
+  assert.equal(stderr, '');
+  const result = JSON.parse(stdout);
+  assert.equal(result.error.code, 'INVALID_REQUEST');
+  assert.equal(result.nextActions.length, 1);
+  assert.equal(result.nextActions[0].command, 'inframux onboard authorize --help');
+  assert.equal(`${stdout}\n${stderr}`.includes('not-a-session'), false);
+});
+
+test('uses ASCII human output in a dumb terminal', async () => {
+  let stdout = '';
+  const exitCode = await runCli(['bootstrap'], {
+    cwd: process.cwd(), stdin: process.stdin,
+    writeStdout: (value) => { stdout += value; }, writeStderr: () => undefined,
+    stdoutIsTTY: true, stderrIsTTY: true,
+    environment: { TERM: 'dumb', INFRAMUX_FILEVAULT_STATUS: 'ready' },
+  });
+  assert.equal(exitCode, 0);
+  assert.match(stdout, /^\[ok\] bootstrap plan ready/m);
+  assert.doesNotMatch(stdout, /✓|✗|◐|○/u);
+});
+
 test('starts universal onboarding from a blank Git repository and writes only a non-secret manifest', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-cli-onboard-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -146,6 +175,39 @@ test('guides interactive authorization with progress and a concise handoff', asy
   assert.match(stdout, /1 of 1 services connected/);
   assert.match(stdout, /onboard finish/);
   assert.doesNotMatch(stdout, /"services"|credential-canary/);
+  assert.doesNotMatch(stderr, /credential-canary/);
+});
+
+test('reports a saved credential when session reconciliation fails after enrollment', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-cli-authorize-reconcile-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const socketPath = path.join(root, 'broker.sock');
+  const id = '018f47d2-8737-7a19-8000-123456789abc';
+  const server = await listenUnixSocket({ socketPath, handlers: {
+    'onboarding.status': async () => ({
+      schema: 1, id, project: 'example', providers: ['synthetic'],
+      services: { synthetic: { config: { credential: 'example-synthetic-admin', accountId: 'account' } } },
+      state: 'authorization-required', complete: false,
+      nextActions: [{ type: 'authorize-providers', actor: 'user', command: `inframux onboard authorize ${id}`,
+        description: 'Continue.', interactive: true, privileged: false }],
+    }),
+    'credential.enroll': async () => ({ schema: 1, identity: { accountId: 'account' } }),
+    'onboarding.provider-verified': async () => { throw new Error('synthetic session write failure'); },
+  } });
+  t.after(() => server.close());
+  const stdin = new PassThrough() as PassThrough & { isTTY: true; isRaw: boolean; setRawMode(value: boolean): void };
+  stdin.isTTY = true; stdin.isRaw = false; stdin.setRawMode = (value) => { stdin.isRaw = value; };
+  let stderr = '';
+  setImmediate(() => stdin.write('credential-canary\r'));
+  const exitCode = await runCli(['onboard', 'authorize', id], {
+    cwd: root, stdin: stdin as unknown as NodeJS.ReadStream,
+    writeStdout: () => undefined, writeStderr: (value) => { stderr += value; },
+    stdoutIsTTY: true, stderrIsTTY: true,
+    environment: { INFRAMUX_CLIENT_SOCKET: socketPath, TERM: 'xterm-256color' },
+  });
+  assert.equal(exitCode, 64);
+  assert.match(stderr, /credential was saved/i);
+  assert.match(stderr, /onboard finish|onboard resume/i);
   assert.doesNotMatch(stderr, /credential-canary/);
 });
 

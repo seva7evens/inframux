@@ -15,11 +15,12 @@ inframux audit verify --json
 
 `inframux onboard start --services <csv> --json` may run only inside a Git
 repository with exactly one canonical normalized remote. It creates a safe
-`.inframux.toml` and a private 24-hour owner-bound session. Use `resume` after
-any interruption; it detects credentials that completed verification before the
-terminal or agent disconnected. Repeating identical configure/finish operations
-is idempotent. A changed configuration requires a new session rather than an
-in-place identity mutation.
+`.inframux.toml` and a private 24-hour owner-bound session. `finish` performs
+reconciliation after any interruption and detects credentials committed before
+the terminal or agent disconnected. `resume` remains optional inspection.
+Repeating identical configure/finish operations is idempotent. A changed
+configuration replaces the old value while that provider remains unverified;
+verified configuration is immutable in the current session.
 
 `onboard authorize` must run in the user's interactive Terminal. It refuses a
 pipe/non-TTY so an agent cannot capture static credentials. Google additionally
@@ -31,6 +32,19 @@ Expired sessions remain inspectable but immutable. Start a new session with the
 same service list; already verified credentials remain active. `finish` refuses
 partial provider state and approves only the evidence captured at `start`.
 
+`BROKER_CHECKOUT_INACCESSIBLE` means the hardened service identity cannot
+traverse one private ancestor. Preview the exact, session-bound repair:
+
+```bash
+inframux trust prepare-checkout <session-id>
+inframux trust prepare-checkout <session-id> --apply
+```
+
+The helper validates the captured repository evidence again and grants only
+`group:_inframux allow search`. It records a private inode/device receipt,
+skips a matching ACL it did not create, and removes only owned entries during
+hardened uninstall.
+
 `CHECKOUT_NOT_APPROVED` means the exact real path/common-dir/digest record is
 missing or changed. Do not copy a manifest or weaken the remote check; submit a
 new local approval through the management path.
@@ -40,7 +54,8 @@ silently to ambient CLI credentials or user mode.
 
 ## Lifecycle
 
-`inframux bootstrap --json` is a non-mutating hardened preview.
+`inframux bootstrap` is a human-readable non-mutating hardened preview;
+`inframux bootstrap --json` exposes the same `planned` journey for automation.
 `inframux bootstrap --apply` stages and seals the already-built installed
 package as the current user, then invokes the narrow management helper through
 one macOS authorization. It does not require a checkout and never runs a

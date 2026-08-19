@@ -23,3 +23,22 @@ test('emits stable text without cursor controls when animation is disabled', () 
   assert.equal(output, 'Verifying Vercel credentials...\n[ok] Vercel connected\n');
   assert.doesNotMatch(output, /\u001b/);
 });
+
+test('cleans an active timer and signal hooks after interruption', () => {
+  let output = '';
+  const listeners = new Set<() => void>();
+  const signals = {
+    on: (_signal: 'SIGINT' | 'SIGTERM', listener: () => void) => { listeners.add(listener); },
+    off: (_signal: 'SIGINT' | 'SIGTERM', listener: () => void) => { listeners.delete(listener); },
+  };
+  const progress = new ProgressController({
+    write: (value) => { output += value; }, enabled: true, unicode: false, signals,
+  });
+  progress.start('Verifying credentials...');
+  assert.equal(listeners.size, 2);
+  [...listeners][0]!();
+  assert.equal(listeners.size, 0);
+  const afterSignal = output;
+  progress.stop();
+  assert.equal(output, afterSignal);
+});

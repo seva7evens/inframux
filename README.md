@@ -15,7 +15,8 @@ executable in the credential boundary.
 The production core is implemented on exact Node.js `24.18.1`: sealed macOS
 bootstrap, separate launchd broker/worker identities, repository trust,
 broker-owned credentials, HMAC audit, bounded Unix RPC, fixed-origin provider
-adapters, Desktop Google OAuth, central Playwright, CI, and separate-process
+adapters, Desktop Google OAuth, central Playwright, a unified human/machine CLI
+journey, and separate-process
 synthetic E2E. Cloudflare, Vercel, Supabase, Sentry, UptimeRobot, Resend,
 PostHog, and Google adapters are protocol-tested locally.
 
@@ -73,35 +74,50 @@ See [architecture](docs/architecture.md) and [security](SECURITY.md).
 
 ## CLI
 
+Human output is the default. It reports the outcome and exact next action
+without dumping internal broker/session objects:
+
 ```bash
 inframux prompt onboarding
-inframux onboard start --services cloudflare,vercel,supabase --json
+inframux onboard start --services cloudflare,vercel,supabase
 inframux onboard configure <session-id> --service <provider> --input-json '{}'
 inframux onboard authorize <session-id>
-inframux onboard resume <session-id> --json
-inframux onboard finish <session-id> --json
-inframux project resolve --json
-inframux status --json
-inframux doctor --json
+inframux onboard finish <session-id>
+inframux agent-instructions
+inframux project resolve
+inframux status
+inframux doctor
+inframux trust prepare-checkout <session-id>
 inframux call <provider> <operation> --input-json '{}'
 inframux browser mcp clean
 inframux browser mcp persistent --provider <provider>
-inframux audit verify --json
-inframux capabilities <provider> --json
-inframux bootstrap --json
+inframux audit verify
+inframux capabilities <provider>
+inframux bootstrap
 inframux bootstrap --apply
-inframux update --check --json
+inframux update --check
 inframux update --rollback
-inframux uninstall --dry-run --json
+inframux uninstall --dry-run
 inframux uninstall
 ```
+
+Agents and automation add `--json`. Every finite machine result is one JSON
+document with additive `state`, `complete`, and ordered `nextActions`; errors
+use the same journey fields while preserving stable codes, exit statuses, and
+legacy `recovery`. Provider streams and MCP byte tunnels remain unwrapped.
+Use root or nested help at any depth, for example
+`inframux onboard authorize --help`.
 
 `prompt onboarding` prints the reusable agent prompt. Its only user-editable
 placeholder is a comma-separated service list. Projects and catalogs are
 derived dynamically from the exact Git remote; package-baked examples are not
 required. Static credentials are entered only in the user's own hidden Terminal
 prompt. Google uses the same `onboard authorize` command with
-`--oauth-client-json /absolute/desktop-client.json`.
+`--oauth-client-json /absolute/desktop-client.json`. `onboard finish`
+reconciles an already-saved credential after an interrupted Terminal handoff,
+so `resume` is optional inspection/recovery rather than a mandatory step.
+Successful finish is replay-safe and returns the same repository-bound agent
+instructions.
 
 Initial repository binding is explicit and non-secret:
 

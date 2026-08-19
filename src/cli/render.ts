@@ -3,11 +3,11 @@ import { journeyFromError } from './journey.js';
 import { renderOnboardingHuman } from './onboarding-ui.js';
 import { renderOperationalHuman } from './operations-ui.js';
 
-export function renderResult(command: string, result: unknown, options: { json: boolean; verbose: boolean }): string {
+export function renderResult(command: string, result: unknown, options: { json: boolean; verbose: boolean; unicode?: boolean }): string {
   if (options.json) return `${JSON.stringify(machineResult(result), null, 2)}\n`;
-  if (command.startsWith('onboard.')) return renderOnboardingHuman(command, result, { unicode: true });
+  if (command.startsWith('onboard.')) return renderOnboardingHuman(command, result, { unicode: options.unicode ?? true });
   if (command === 'agent-instructions') return `${(result as { agentInstructions: string }).agentInstructions}\n`;
-  return renderOperationalHuman(command, result, { unicode: true, verbose: options.verbose });
+  return renderOperationalHuman(command, result, { unicode: options.unicode ?? true, verbose: options.verbose });
 }
 
 export function renderError(error: unknown, json: boolean): { text: string; exitCode: number } {

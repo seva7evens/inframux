@@ -109,6 +109,16 @@ test('reports hardened checkout access before authorization and blocks finish wi
   assert.equal(started.state, 'checkout-access-required');
   assert.equal(started.nextActions[0]!.command, `inframux trust prepare-checkout ${started.id}`);
 
+  const configured = await fixture.broker.handle('onboarding.configure', {
+    sessionId: started.id, provider: 'synthetic', input: { accountId: 'account-sample' },
+  }, fixture.context()) as { state: string; nextActions: Array<{ command: string }> };
+  assert.equal(configured.state, 'checkout-access-required');
+  const status = await fixture.broker.handle('onboarding.status', { sessionId: started.id }, fixture.context()) as {
+    state: string; nextActions: Array<{ command: string }>;
+  };
+  assert.equal(status.state, 'checkout-access-required');
+  assert.equal(status.nextActions[0]!.command, `inframux trust prepare-checkout ${started.id}`);
+
   const preview = await fixture.broker.handle('onboarding.checkout-access', { sessionId: started.id }, fixture.context()) as {
     ready: boolean; ancestors: string[]; principal: string;
   };

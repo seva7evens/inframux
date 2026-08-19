@@ -79,7 +79,7 @@ test('applies hardened release through a narrow management boundary and probes b
     caller: { uid, gid, username: os.userInfo().username },
   }, system);
   assert.equal(uninstalled.uninstalled, true);
-  assert.deepEqual(system.events, ['stop', 'remove']);
+  assert.deepEqual(system.events, ['revoke-checkout-access', 'stop', 'remove']);
 });
 
 test('rejects management requests that break caller and root ownership invariants', async (t) => {
@@ -136,5 +136,6 @@ class FakeManagementSystem implements ManagementSystem {
   async probeServices() { this.events.push('probe'); return true; }
   async stopServices() { this.events.push('stop'); }
   async removeInstallation() { this.events.push('remove'); }
-  async grantCheckoutAccess(ancestors: readonly string[]) { this.checkoutAncestors.push(...ancestors); }
+  async grantCheckoutAccess(_targetRoot: string, ancestors: readonly string[], _sessionId: string) { this.checkoutAncestors.push(...ancestors); }
+  async revokeOwnedCheckoutAccess() { this.events.push('revoke-checkout-access'); }
 }

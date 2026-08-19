@@ -51,6 +51,10 @@ export function renderOperationalHuman(
     if (!ready) lines.push('The helper grants only directory search to the fixed _inframux group.');
     return `${appendActions(lines, value.nextActions).join('\n')}\n`;
   }
+  if (command === 'bootstrap' && value.state === 'planned') {
+    const lines = [`${ok} bootstrap plan ready`, `Mode: ${text(value.mode ?? 'hardened')}`];
+    return `${appendActions(lines, value.nextActions).join('\n')}\n`;
+  }
   if (command === 'bootstrap' && typeof value.version === 'string') {
     return `${ok} inframux ${text(value.version)} installed\n\nMode: ${text(value.mode ?? 'unknown')}\n`;
   }
