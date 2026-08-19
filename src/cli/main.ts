@@ -21,6 +21,8 @@ import { renderCommandHelp, resolveCommandHelp } from './command-catalog.js';
 import { parseCli } from './parse.js';
 import { runPrivilegedHelper } from './privileged.js';
 import { renderError, renderResult } from './render.js';
+import { detectTerminalCapabilities } from './terminal.js';
+import { ProgressController } from './progress.js';
 
 export interface CliDependencies {
   readonly cwd: string;
@@ -28,6 +30,9 @@ export interface CliDependencies {
   readonly writeStdout: (value: string) => void;
   readonly writeStderr: (value: string) => void;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly stdoutIsTTY?: boolean;
+  readonly stderrIsTTY?: boolean;
+  readonly terminalColumns?: number;
   readonly authorizeGoogle?: typeof authorizeGoogleDesktop;
 }
 
@@ -101,6 +106,17 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
         });
       }
       const client = await connectBroker(dependencies.environment);
+      const terminal = detectTerminalCapabilities({
+        isTTY: dependencies.stderrIsTTY ?? false,
+        environment: dependencies.environment,
+        ...(dependencies.terminalColumns === undefined ? {} : { columns: dependencies.terminalColumns }),
+        json: command.json,
+      });
+      const progress = new ProgressController({
+        write: dependencies.writeStderr,
+        enabled: terminal.animation && (dependencies.stdoutIsTTY ?? false),
+        unicode: terminal.unicode,
+      });
       try {
         const session = await client.call('onboarding.status', { sessionId: command.sessionId }) as unknown as {
           project: string; providers: string[];
@@ -127,18 +143,25 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
           dependencies.writeStderr(`${provider.displayName}: create/retrieve the credential at ${provider.onboarding.setupUrl}\n`);
           const secret = await readSecret(dependencies.stdin, dependencies.writeStderr);
           try {
-            await client.call('credential.enroll', {
-              project: session.project, provider: providerId, credentialType: 'administrative-token',
-              secretBase64: secret.toString('base64'),
-            });
-            const alias = typeof service.config.credential === 'string' ? service.config.credential : `${providerId}-admin`;
-            await client.call('onboarding.provider-verified', { sessionId: command.sessionId, provider: providerId, profile: alias });
+            progress.start(`Verifying ${provider.displayName} credentials…`);
+            try {
+              await client.call('credential.enroll', {
+                project: session.project, provider: providerId, credentialType: 'administrative-token',
+                secretBase64: secret.toString('base64'),
+              });
+              const alias = typeof service.config.credential === 'string' ? service.config.credential : `${providerId}-admin`;
+              await client.call('onboarding.provider-verified', { sessionId: command.sessionId, provider: providerId, profile: alias });
+              progress.succeed(`${provider.displayName} connected`);
+            } catch (error) {
+              progress.fail(`${provider.displayName} could not be verified; the credential was not saved`);
+              throw error;
+            }
           } finally { secret.fill(0); }
         }
         const result = await client.call('onboarding.status', { sessionId: command.sessionId });
         dependencies.writeStdout(renderResult(command.command, result, command));
         return 0;
-      } finally { client.close(); }
+      } finally { progress.stop(); client.close(); }
     }
     if (command.command === 'bootstrap') {
       const paths = resolveInframuxPaths({

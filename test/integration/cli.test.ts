@@ -9,6 +9,7 @@ import test from 'node:test';
 import { runCli } from '../../src/cli/main.js';
 import { listenUnixSocket } from '../../src/ipc/server.js';
 import { encodeOAuthCredential } from '../../src/providers/oauth.js';
+import { PassThrough } from 'node:stream';
 
 const execute = promisify(execFile);
 
@@ -105,6 +106,47 @@ test('routes universal configure, resume, and finish commands through the broker
     assert.equal(code, 0);
   }
   assert.deepEqual(seen, ['configure', 'status', 'finish']);
+});
+
+test('guides interactive authorization with progress and a concise handoff', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-cli-authorize-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const socketPath = path.join(root, 'broker.sock');
+  const id = '018f47d2-8737-7a19-8000-123456789abc';
+  let verified = false;
+  const session = () => ({
+    schema: 1, id, project: 'example', providers: ['synthetic'],
+    services: { synthetic: { config: { credential: 'example-synthetic-admin', accountId: 'account' },
+      ...(verified ? { profile: 'example-synthetic-admin' } : {}) } },
+    state: verified ? 'ready-to-finish' : 'authorization-required', complete: false,
+    nextActions: [{ type: verified ? 'finish-onboarding' : 'authorize-providers', actor: verified ? 'agent' : 'user',
+      command: verified ? `inframux onboard finish ${id} --json` : `inframux onboard authorize ${id}`,
+      description: 'Continue.', interactive: !verified, privileged: false }],
+  });
+  const server = await listenUnixSocket({ socketPath, handlers: {
+    'onboarding.status': async () => session(),
+    'credential.enroll': async () => ({ schema: 1, identity: { accountId: 'account' } }),
+    'onboarding.provider-verified': async () => { verified = true; return session(); },
+  } });
+  t.after(() => server.close());
+  const stdin = new PassThrough() as PassThrough & { isTTY: true; isRaw: boolean; setRawMode(value: boolean): void };
+  stdin.isTTY = true; stdin.isRaw = false; stdin.setRawMode = (value) => { stdin.isRaw = value; };
+  let stdout = ''; let stderr = '';
+  setImmediate(() => stdin.write('credential-canary\r'));
+  const exitCode = await runCli(['onboard', 'authorize', id], {
+    cwd: root, stdin: stdin as unknown as NodeJS.ReadStream,
+    writeStdout: (value) => { stdout += value; }, writeStderr: (value) => { stderr += value; },
+    stdoutIsTTY: true, stderrIsTTY: true,
+    environment: { INFRAMUX_CLIENT_SOCKET: socketPath, TERM: 'xterm-256color' },
+  });
+  assert.equal(exitCode, 0);
+  assert.match(stderr, /Credential \(input hidden\)/);
+  assert.match(stderr, /Verifying Synthetic test provider credentials/);
+  assert.match(stderr, /Synthetic test provider connected/);
+  assert.match(stdout, /1 of 1 services connected/);
+  assert.match(stdout, /onboard finish/);
+  assert.doesNotMatch(stdout, /"services"|credential-canary/);
+  assert.doesNotMatch(stderr, /credential-canary/);
 });
 
 test('runs Google Desktop authorization from catalog data and sends the envelope only to the broker', async (t) => {

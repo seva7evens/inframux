@@ -1,8 +1,12 @@
 import { InframuxError, asInframuxError, type ErrorCode } from '../core/errors.js';
 import { journeyFromError } from './journey.js';
+import { renderOnboardingHuman } from './onboarding-ui.js';
 
 export function renderResult(command: string, result: unknown, options: { json: boolean; verbose: boolean }): string {
-  if (options.json || command !== 'status') return `${JSON.stringify(result, null, options.json || options.verbose ? 2 : 0)}\n`;
+  if (options.json) return `${JSON.stringify(result, null, 2)}\n`;
+  if (command.startsWith('onboard.')) return renderOnboardingHuman(command, result, { unicode: true });
+  if (command === 'agent-instructions') return `${(result as { agentInstructions: string }).agentInstructions}\n`;
+  if (command !== 'status') return `${JSON.stringify(result, null, options.verbose ? 2 : 0)}\n`;
   const status = result as {
     project: string; securityMode: string; checkoutApproved: boolean; repository: string;
     providers: Array<{ id: string; health: string; identity?: Record<string, string> }>;

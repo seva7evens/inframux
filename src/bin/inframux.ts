@@ -62,6 +62,9 @@ export async function main(): Promise<number> {
     stdin: process.stdin,
     writeStdout: (value) => process.stdout.write(value),
     writeStderr: (value) => process.stderr.write(value),
+    stdoutIsTTY: process.stdout.isTTY === true,
+    stderrIsTTY: process.stderr.isTTY === true,
+    terminalColumns: process.stderr.columns,
     environment: process.env,
   });
 }
