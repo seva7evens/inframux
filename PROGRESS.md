@@ -9,7 +9,7 @@
 
 ## 2026-08-19 — Unified CLI journey contract
 
-**Status:** Awaiting written-spec review
+**Status:** Implementation planned
 
 **Scope:** Turn every inframux command into a coherent human and machine
 journey, beginning with the live onboarding failures observed during a
@@ -39,6 +39,12 @@ security tests.
   identity limitation without claiming unverified administrative scope.
 - Runtime implementation has not started. The written-spec review gate
   precedes the TDD implementation plan.
+- The user approved the written spec. Added and self-reviewed the executable
+  TDD plan at
+  `docs/superpowers/plans/2026-08-19-unified-cli-journeys.md`, covering nine
+  independently testable deliveries from public contracts through packaged
+  E2E and CI. Inline execution was selected because project policy forbids
+  subagent delegation.
 
 ## 2026-08-19 — CLI user experience roadmap
 
