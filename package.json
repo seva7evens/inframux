@@ -1,0 +1,65 @@
+{
+  "name": "inframux",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Repository-bound local infrastructure credential and execution broker",
+  "license": "UNLICENSED",
+  "type": "module",
+  "os": [
+    "darwin"
+  ],
+  "files": [
+    "bin/inframux",
+    "dist/src",
+    "runtime/playwright/src",
+    "docs/onboarding.md",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "bin": {
+    "inframux": "bin/inframux"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "packageManager": "npm@11.16.0",
+  "scripts": {
+    "preinstall": "node -e \"if(process.version!=='v24.18.1'){console.error('inframux requires Node.js 24.18.1');process.exit(1)}\"",
+    "check": "tsc --noEmit",
+    "build": "tsc && node scripts/prepare-built-artifacts.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "package:metadata": "node scripts/package-contract.mjs metadata",
+    "package:dry-run": "node scripts/package-contract.mjs dry-run",
+    "prepack": "npm run clean && npm run build && npm run package:metadata",
+    "test": "tsx --test test/unit/*.test.ts test/integration/*.test.ts",
+    "test:unit": "tsx --test test/unit/*.test.ts",
+    "test:integration": "tsx --test test/integration/*.test.ts",
+    "test:e2e": "node scripts/e2e-synthetic.mjs",
+    "test:bootstrap": "node scripts/bootstrap-smoke.mjs",
+    "test:package": "node scripts/package-smoke.mjs",
+    "test:coverage": "tsx --test --experimental-test-coverage --test-coverage-include=src/onboarding/** --test-coverage-include=src/security/** --test-coverage-include=src/trust/** --test-coverage-include=src/providers/adapters/** --test-coverage-include=src/providers/registry.ts --test-coverage-lines=85 --test-coverage-functions=85 --test-coverage-branches=70 test/unit/*.test.ts test/integration/*.test.ts",
+    "scan:publication": "node scripts/scan-publication.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "audit:deps": "npm audit --audit-level=high",
+    "test:runtime": "node --test runtime/playwright/test/*.test.mjs",
+    "verify": "npm run check && npm run build && npm test && npm run test:coverage && npm run test:e2e && npm run test:bootstrap && npm run test:package && npm run scan:publication && npm run scan:secrets && npm run audit:deps && npm run test:runtime"
+  },
+  "engines": {
+    "node": "24.18.1"
+  },
+  "dependencies": {
+    "@playwright/cli": "0.1.18",
+    "@playwright/mcp": "0.0.79",
+    "@playwright/test": "1.62.1",
+    "playwright": "1.62.1",
+    "smol-toml": "1.8.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}

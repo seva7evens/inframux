@@ -1,0 +1,2 @@
+<!-- Rendered by src/install/launchd.ts; values are validated and XML-escaped. -->
+<plist version="1.0"><dict><key>Label</key><string>dev.inframux.broker</string></dict></plist>

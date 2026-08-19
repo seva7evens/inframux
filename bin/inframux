@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+invocation=$0
+case "$invocation" in
+  /*) ;;
+  *) invocation=$PWD/$invocation ;;
+esac
+
+launcher_dir=$(CDPATH= cd -- "$(dirname -- "$invocation")" && pwd -P)
+runtime=$launcher_dir/node
+if [ ! -x "$runtime" ]; then
+  runtime=$(command -v node) || {
+    echo 'inframux requires Node.js 24.18.1 but no Node executable was found' >&2
+    exit 127
+  }
+fi
+
+self=$invocation
+links=0
+while [ -L "$self" ]; do
+  links=$((links + 1))
+  if [ "$links" -gt 16 ]; then
+    echo 'inframux launcher has too many symbolic-link levels' >&2
+    exit 126
+  fi
+  self_dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd -P)
+  target=$(/usr/bin/readlink "$self")
+  case "$target" in
+    /*) self=$target ;;
+    *) self=$self_dir/$target ;;
+  esac
+done
+
+root=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd -P)
+exec "$runtime" "$root/dist/src/bin/inframux.js" "$@"

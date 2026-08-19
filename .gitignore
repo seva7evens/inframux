@@ -1,0 +1,66 @@
+# macOS and editors
+.DS_Store
+._*
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.secret
+*.token
+*.pem
+*.key
+auth.json
+credentials/
+oauth/
+browser-state/
+.mcp-auth/
+
+# JavaScript dependencies and package-manager state
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build and test output
+dist/
+build/
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+.playwright-cli/
+
+# inframux Playwright runtime payload and sensitive state
+runtime/playwright/node_modules/
+runtime/playwright/browsers/
+runtime/playwright/profiles/
+runtime/playwright/artifacts/
+runtime/playwright/state/
+runtime/playwright/verification/
+runtime/playwright/migration/
+
+# Local audit/runtime output
+logs/
+audit/
+tmp/
+*.log
+*.pid
+
+# Research clones are references, not vendored source
+references/
+
+# Isolated implementation worktrees
+.worktrees/
