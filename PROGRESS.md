@@ -7,6 +7,36 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-22 — Repeated Sentry MCP OAuth investigation
+
+**Status:** Resolved locally; inframux runtime unchanged
+
+**Scope:** Identify the process repeatedly opening Sentry OAuth browser tabs,
+separate Codex MCP client behavior from inframux provider verification, and
+remove the loop without reading, replacing, or exposing saved credentials. If
+inframux is involved, add a failing regression test before changing production
+code and verify the installed hardened runtime after the fix.
+
+### Resolution evidence
+
+- The browser target was the OAuth endpoint of a third-party remote MCP proxy,
+  not an inframux provider request. Process ancestry showed multiple duplicate
+  proxy instances owned by the local agent host while both inframux launchd
+  services remained stable.
+- Two duplicate, globally enabled Sentry MCP registrations caused every active
+  agent session to start parallel OAuth clients. Both registrations were made
+  reversibly disabled in the user's local agent configuration, and only the
+  already-running Sentry proxy processes were terminated.
+- No credential or OAuth state bytes were read, deleted, or replaced. Existing
+  provider credentials in the hardened vault were preserved.
+- The disabled state is visible through the agent CLI. Repeated observation
+  found zero Sentry MCP processes and no new auth-state writes after the
+  change.
+- A fresh repository-bound inframux `status` and live `doctor` completed with
+  Sentry healthy; that API verification spawned no MCP or browser process.
+  Therefore no inframux source, release, or privileged bootstrap change was
+  required.
+
 ## 2026-08-21 — Live hardened 0.1.4 acceptance
 
 **Status:** Accepted live
