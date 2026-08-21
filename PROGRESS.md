@@ -7,6 +7,34 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-21 — Live hardened 0.1.4 acceptance
+
+**Status:** Accepted live
+
+**Scope:** Confirm the user-authorized `0.1.4` activation from independent live
+evidence: sealed `current` target and manifest, both launchd jobs and PIDs,
+listening replacement sockets, cleared bounded diagnostics, preserved
+persistent-state metadata, repository-bound status, provider doctor results,
+and audit-chain validity. Do not read secret bytes or request reauthorization.
+
+### Acceptance evidence
+
+- The active symlink and sealed package manifest both report `0.1.4` on exact
+  Node `24.18.1`; the retained rollback version remains installed separately.
+- Both launchd jobs are continuously `running` with live PIDs. Direct private
+  RPC reports the exact release, broker readiness, and an attached worker.
+- Both socket inodes were recreated at the `0.1.4` activation time with the
+  intended service ownership and modes. The installed plists contain the new
+  runtime-manifest and per-service diagnostic roots.
+- Repository-bound `status` completed in hardened mode with the checkout still
+  approved and all five previously enrolled credentials present and healthy.
+- A fresh live `doctor` verified all five external provider identities and
+  expected resources without reauthorization. `audit verify` returned a valid
+  chain, and `agent-instructions` returned a complete machine journey.
+- `/usr/local/bin/inframux update --check --json` reports current/local `0.1.4`,
+  `updateAvailable: false`, and no next action. No secret file or credential
+  bytes were inspected during acceptance.
+
 ## 2026-08-21 — Hardened daemon health and transactional upgrade
 
 **Status:** Release-verified; one user-authorized live hardened activation remains
