@@ -19,6 +19,7 @@ export interface SyntheticSystem {
   readonly browserStateRoot: string;
   readonly browserTasksRoot: string;
   run(project: 'alpha' | 'beta', args: readonly string[], stdin?: string): Promise<CommandResult>;
+  runInteractive(project: 'alpha' | 'beta', args: readonly string[], secret: string): Promise<CommandResult>;
   runAt(cwd: string, args: readonly string[], stdin?: string): Promise<CommandResult>;
   spawn(project: 'alpha' | 'beta', args: readonly string[]): ChildProcess;
   serviceOutput(): string;
@@ -133,6 +134,7 @@ fs.writeFileSync(path.join(output, 'browser-ran.json'), JSON.stringify({ cwd: pr
   return {
     root, stateRoot, repositories, tokens, environment: commonEnvironment, browserStateRoot, browserTasksRoot,
     run: (project, args, stdin) => runProcess(repositories[project], args, commonEnvironment, stdin),
+    runInteractive: (project, args, secret) => runInteractiveProcess(repositories[project], args, commonEnvironment, secret),
     runAt: (cwd, args, stdin) => runProcess(cwd, args, commonEnvironment, stdin),
     spawn: (project, args) => spawn(process.execPath, [dist('inframux.js'), ...args], {
       cwd: repositories[project], env: commonEnvironment, stdio: ['pipe', 'pipe', 'pipe'],
@@ -150,6 +152,62 @@ fs.writeFileSync(path.join(output, 'browser-ran.json'), JSON.stringify({ cwd: pr
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function runInteractiveProcess(
+  cwd: string,
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  secret: string,
+): Promise<CommandResult> {
+  return new Promise((resolve, reject) => {
+    const command = [process.execPath, dist('inframux.js'), ...args].map(tclWord).join(' ');
+    const expectProgram = [
+      'set timeout 10',
+      'log_user 1',
+      `spawn ${command}`,
+      'expect "Credential (input hidden):"',
+      'gets stdin secret',
+      'send -- "$secret\\r"',
+      'expect eof',
+      'set result [wait]',
+      'exit [lindex $result 3]',
+    ].join('\n');
+    const child = spawn('/usr/bin/expect', ['-c', expectProgram], {
+      cwd,
+      env: { ...environment, TERM: 'xterm-256color' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let sent = false;
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`Timed out waiting for interactive credential prompt: ${Buffer.concat(stdout).toString('utf8')}`));
+    }, 10_000);
+    timeout.unref();
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout.push(Buffer.from(chunk));
+      if (!sent && Buffer.concat(stdout).toString('utf8').includes('Credential (input hidden):')) {
+        sent = true;
+        child.stdin?.end(`${secret}\n`);
+      }
+    });
+    child.stderr?.on('data', (chunk: Buffer) => stderr.push(Buffer.from(chunk)));
+    child.once('error', (error) => { clearTimeout(timeout); reject(error); });
+    child.once('close', (code) => {
+      clearTimeout(timeout);
+      resolve({
+        code: code ?? 1,
+        stdout: Buffer.concat(stdout).toString('utf8').replaceAll('\r', ''),
+        stderr: Buffer.concat(stderr).toString('utf8').replaceAll('\r', ''),
+      });
+    });
+  });
+}
+
+function tclWord(value: string): string {
+  return `{${value.replaceAll('\\', '\\\\').replaceAll('{', '\\{').replaceAll('}', '\\}')}}`;
 }
 
 async function createRepository(root: string, project: 'alpha' | 'beta'): Promise<string> {

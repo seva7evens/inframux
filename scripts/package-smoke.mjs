@@ -96,6 +96,10 @@ try {
     npm_execpath: '/forbidden/inframux-bootstrap-must-not-run-npm',
   });
 
+  await run(process.execPath, [
+    path.join(repositoryRoot, 'scripts/cli-journey-smoke.mjs'), installedBin,
+  ], unrelatedCwd, runtimeEnvironment);
+
   assert.match(await run(installedBin, ['--help'], unrelatedCwd, runtimeEnvironment), /inframux/);
   const onboardingPrompt = await run(installedBin, ['prompt', 'onboarding'], unrelatedCwd, runtimeEnvironment);
   assert.match(onboardingPrompt, /Services: <ENTER COMMA-SEPARATED SERVICES>/);
@@ -107,11 +111,11 @@ try {
     'bootstrap', '--user-mode', '--apply', '--json',
   ], unrelatedCwd, runtimeEnvironment, 6 * 60_000));
   assert.equal(bootstrap.mode, 'user');
-  assert.equal(bootstrap.version, '0.1.0');
+  assert.equal(bootstrap.version, '0.1.1');
 
   const sealedCli = path.join(installRoot, 'current/bin/inframux');
   const update = parseJson(await run(sealedCli, ['update', '--check', '--json'], unrelatedCwd, runtimeEnvironment));
-  assert.equal(update.currentVersion, '0.1.0');
+  assert.equal(update.currentVersion, '0.1.1');
   assert.equal(update.updateAvailable, false);
 
   const installedNode = path.join(installRoot, 'current/bin/node');

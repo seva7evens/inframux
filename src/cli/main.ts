@@ -11,15 +11,19 @@ import { connectClient } from '../ipc/client.js';
 import { planBootstrap, planUninstall, rollback as rollbackVersion } from '../install/lifecycle.js';
 import { applyUserBootstrap, stageLocalRelease } from '../install/coordinator.js';
 import { resolvePackageRoot } from '../install/package-root.js';
-import { writeMaintenanceRequest, writeManagementRequest } from '../install/management.js';
+import { writeCheckoutAccessRequest, writeMaintenanceRequest, writeManagementRequest } from '../install/management.js';
 import { resolveInframuxPaths } from '../core/paths.js';
 import { createProviderRegistry } from '../providers/registry.js';
 import { deriveProjectIdentity, parseServiceList } from '../onboarding/project.js';
 import { renderUniversalOnboardingPrompt } from '../integration/agent-config.js';
 import { authorizeGoogleDesktop } from './google-desktop-auth.js';
+import { helpCommand, renderCommandHelp, resolveCommandHelp, resolveNearestCommandHelp } from './command-catalog.js';
 import { parseCli } from './parse.js';
 import { runPrivilegedHelper } from './privileged.js';
 import { renderError, renderResult } from './render.js';
+import { detectTerminalCapabilities } from './terminal.js';
+import { ProgressController } from './progress.js';
+import { createJourneyAction, createJourneyProjection, withJourney } from './journey.js';
 
 export interface CliDependencies {
   readonly cwd: string;
@@ -27,17 +31,30 @@ export interface CliDependencies {
   readonly writeStdout: (value: string) => void;
   readonly writeStderr: (value: string) => void;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly stdoutIsTTY?: boolean;
+  readonly stderrIsTTY?: boolean;
+  readonly terminalColumns?: number;
   readonly authorizeGoogle?: typeof authorizeGoogleDesktop;
 }
 
 export async function runCli(argv: readonly string[], dependencies: CliDependencies): Promise<number> {
-  let json = false;
+  let json = argv.includes('--json');
+  let parsed = false;
   try {
     const release = resolvePackageRoot(import.meta.url);
-    const command = parseCli(argv);
+    const parsedCommand = parseCli(argv);
+    parsed = true;
+    const command = Object.assign(parsedCommand, {
+      unicode: detectTerminalCapabilities({
+        isTTY: dependencies.stdoutIsTTY ?? false,
+        environment: dependencies.environment,
+        ...(dependencies.terminalColumns === undefined ? {} : { columns: dependencies.terminalColumns }),
+        json: parsedCommand.json,
+      }).unicode,
+    });
     json = command.json;
     if (command.command === 'help') {
-      dependencies.writeStdout(helpText());
+      dependencies.writeStdout(renderCommandHelp(resolveCommandHelp(argv) ?? resolveCommandHelp([])!));
       return 0;
     }
     if (command.command === 'capabilities') {
@@ -100,6 +117,17 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
         });
       }
       const client = await connectBroker(dependencies.environment);
+      const terminal = detectTerminalCapabilities({
+        isTTY: dependencies.stderrIsTTY ?? false,
+        environment: dependencies.environment,
+        ...(dependencies.terminalColumns === undefined ? {} : { columns: dependencies.terminalColumns }),
+        json: command.json,
+      });
+      const progress = new ProgressController({
+        write: dependencies.writeStderr,
+        enabled: terminal.animation && (dependencies.stdoutIsTTY ?? false),
+        unicode: terminal.unicode,
+      });
       try {
         const session = await client.call('onboarding.status', { sessionId: command.sessionId }) as unknown as {
           project: string; providers: string[];
@@ -126,18 +154,29 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
           dependencies.writeStderr(`${provider.displayName}: create/retrieve the credential at ${provider.onboarding.setupUrl}\n`);
           const secret = await readSecret(dependencies.stdin, dependencies.writeStderr);
           try {
-            await client.call('credential.enroll', {
-              project: session.project, provider: providerId, credentialType: 'administrative-token',
-              secretBase64: secret.toString('base64'),
-            });
-            const alias = typeof service.config.credential === 'string' ? service.config.credential : `${providerId}-admin`;
-            await client.call('onboarding.provider-verified', { sessionId: command.sessionId, provider: providerId, profile: alias });
+            progress.start(`Verifying ${provider.displayName} credentials…`);
+            let credentialSaved = false;
+            try {
+              await client.call('credential.enroll', {
+                project: session.project, provider: providerId, credentialType: 'administrative-token',
+                secretBase64: secret.toString('base64'),
+              });
+              credentialSaved = true;
+              const alias = typeof service.config.credential === 'string' ? service.config.credential : `${providerId}-admin`;
+              await client.call('onboarding.provider-verified', { sessionId: command.sessionId, provider: providerId, profile: alias });
+              progress.succeed(`${provider.displayName} connected`);
+            } catch (error) {
+              progress.fail(credentialSaved
+                ? `${provider.displayName} credential was saved; run inframux onboard finish ${command.sessionId} to reconcile`
+                : `${provider.displayName} could not be verified; the credential was not saved`);
+              throw error;
+            }
           } finally { secret.fill(0); }
         }
         const result = await client.call('onboarding.status', { sessionId: command.sessionId });
         dependencies.writeStdout(renderResult(command.command, result, command));
         return 0;
-      } finally { client.close(); }
+      } finally { progress.stop(); client.close(); }
     }
     if (command.command === 'bootstrap') {
       const paths = resolveInframuxPaths({
@@ -211,7 +250,16 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
         accounts: { broker: null, worker: null },
         socketPathsExist: false,
       });
-      dependencies.writeStdout(renderResult(command.command, plan, command));
+      const applyCommand = command.mode === 'user'
+        ? 'inframux bootstrap --user-mode --apply'
+        : 'inframux bootstrap --apply';
+      dependencies.writeStdout(renderResult(command.command, withJourney({ schema: 1, ...plan }, createJourneyProjection('planned', false, [
+        createJourneyAction({
+          type: 'apply-bootstrap', actor: 'user', command: applyCommand,
+          description: 'Review the plan, then install inframux.', interactive: true,
+          privileged: command.mode === 'hardened',
+        }),
+      ])), command));
       return 0;
     }
     if (command.command === 'update') {
@@ -311,6 +359,47 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
       }
     }
 
+    if (command.command === 'trust.prepare-checkout') {
+      const client = await connectBroker(dependencies.environment);
+      try {
+        const plan = await client.call('onboarding.checkout-access', { sessionId: command.sessionId }) as {
+          ready: boolean; principal: '_inframux'; ancestors: string[];
+          repositoryRoot: string; gitCommonDir: string;
+        };
+        if (!command.apply || plan.ready) {
+          const result = withJourney({ schema: 1, ...plan }, plan.ready
+            ? createJourneyProjection('healthy', true, [])
+            : createJourneyProjection('checkout-access-required', false, [createJourneyAction({
+              type: 'apply-checkout-access', actor: 'user',
+              command: `inframux trust prepare-checkout ${command.sessionId} --apply`,
+              description: 'Apply the reviewed minimal traversal ACL with macOS authorization.',
+              interactive: true, privileged: true,
+            })]));
+          dependencies.writeStdout(renderResult(command.command, result, command));
+          return 0;
+        }
+        const paths = resolveInframuxPaths({ mode: 'hardened' });
+        const requestRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-checkout-access-'));
+        const requestFile = path.join(requestRoot, 'request.json');
+        try {
+          const caller = os.userInfo();
+          await writeCheckoutAccessRequest(requestFile, {
+            schema: 1, operation: 'checkout-access', targetRoot: paths.root,
+            sessionId: command.sessionId, principal: plan.principal,
+            repositoryRoot: plan.repositoryRoot, gitCommonDir: plan.gitCommonDir,
+            ancestors: plan.ancestors,
+            caller: { uid: process.getuid?.() ?? caller.uid, gid: process.getgid?.() ?? caller.gid, username: caller.username },
+          });
+          await runPrivilegedHelper(
+            path.join(paths.root, 'current/bin/node'),
+            path.join(paths.root, 'current/dist/src/bin/manage.js'),
+            'checkout-access', requestFile,
+          );
+          return 0;
+        } finally { await rm(requestRoot, { recursive: true, force: true }); }
+      } finally { client.close(); }
+    }
+
     const client = await connectBroker(dependencies.environment);
     try {
       let brokerOperation: string;
@@ -404,6 +493,10 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
             brokerOperation = 'audit.verify';
             payload = checkout;
             break;
+          case 'agent-instructions':
+            brokerOperation = 'agent.instructions';
+            payload = checkout;
+            break;
           default:
             throw new InframuxError('INVALID_REQUEST', 'Command is not wired to the broker');
         }
@@ -415,8 +508,12 @@ export async function runCli(argv: readonly string[], dependencies: CliDependenc
       client.close();
     }
   } catch (error) {
-    const rendered = renderError(error, json);
-    dependencies.writeStderr(`${rendered.text}\n`);
+    const normalized = parsed ? error : new InframuxError('INVALID_REQUEST', 'Invalid command syntax.', {
+      recovery: helpCommand(resolveNearestCommandHelp(argv)),
+    });
+    const rendered = renderError(normalized, json);
+    if (json) dependencies.writeStdout(`${rendered.text}\n`);
+    else dependencies.writeStderr(`${rendered.text}\n`);
     return rendered.exitCode;
   }
 }
@@ -591,6 +688,7 @@ async function readSecret(stdin: NodeJS.ReadStream, write: (value: string) => vo
     const finish = (error?: Error) => {
       tty.off('data', onData);
       tty.setRawMode(previousRaw ?? false);
+      tty.pause();
       write('\n');
       if (error !== undefined) reject(error);
       else resolve(Buffer.from(bytes));
@@ -607,8 +705,4 @@ async function readSecret(stdin: NodeJS.ReadStream, write: (value: string) => vo
     tty.on('data', onData);
     tty.resume();
   });
-}
-
-function helpText(): string {
-  return `inframux <command>\n\nRepository-bound commands:\n  status [--json]\n  doctor [--json]\n  project resolve\n  run <provider> -- <reviewed command>\n  call <provider> <operation> [--input-json JSON]\n  replace-token <provider>\n  reauthorize google-cloud [--oauth-client-json /absolute/file]\n  launch mcp <provider>\n  browser mcp clean|persistent --provider <provider>\n\nUniversal onboarding:\n  prompt onboarding\n  onboard start --services <comma-separated>\n  onboard configure <session> --service <provider> --input-json <json>\n  onboard reuse <session> --service <provider> --from-project <project>\n  onboard resume <session>\n  onboard authorize <session>\n  onboard finish <session>\n\nMaintenance:\n  link --project <project> <absolute-repository> [--write-manifest]\n  trust approve <request-id>\n  trust revoke <absolute-repository>\n  enroll <project> --service <provider> [--oauth-client-json /absolute/file]\n  auth status --project <project>\n  auth revoke --project <project> --service <provider>\n  capabilities <provider> [--json]\n  audit verify [--json]\n  bootstrap [--user-mode] [--apply]\n  update [--check|--rollback]\n  uninstall --dry-run\n`;
 }

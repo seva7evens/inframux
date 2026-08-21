@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { parseCli } from '../../src/cli/parse.js';
+import { renderCommandHelp, resolveCommandHelp } from '../../src/cli/command-catalog.js';
 import { renderError, renderResult } from '../../src/cli/render.js';
 import { InframuxError } from '../../src/core/errors.js';
 
@@ -43,6 +44,7 @@ test('parses explicit onboarding, MCP, browser, audit, lifecycle, and capability
     command: 'onboard.reuse', sessionId: '018f47d2-8737-7a19-8000-123456789abc', provider: 'vercel', sourceProject: 'shared-infra', json: false, verbose: false,
   });
   assert.deepEqual(parseCli(['prompt', 'onboarding']), { command: 'prompt.onboarding', json: false, verbose: false });
+  assert.deepEqual(parseCli(['agent-instructions', '--json']), { command: 'agent-instructions', json: true, verbose: false });
   assert.deepEqual(parseCli(['enroll', 'sample', '--service', 'cloudflare']), {
     command: 'enroll', project: 'sample', provider: 'cloudflare', json: false, verbose: false,
   });
@@ -65,6 +67,10 @@ test('parses explicit onboarding, MCP, browser, audit, lifecycle, and capability
   });
   assert.deepEqual(parseCli(['trust', 'revoke', '/tmp/sample']), {
     command: 'trust.revoke', repository: '/tmp/sample', json: false, verbose: false,
+  });
+  assert.deepEqual(parseCli(['trust', 'prepare-checkout', '018f47d2-8737-7a19-8000-123456789abc', '--apply']), {
+    command: 'trust.prepare-checkout', sessionId: '018f47d2-8737-7a19-8000-123456789abc', apply: true,
+    json: false, verbose: false,
   });
   assert.deepEqual(parseCli(['auth', 'status', '--project', 'sample']), {
     command: 'auth.status', project: 'sample', json: false, verbose: false,
@@ -94,7 +100,9 @@ test('renders concise safe status and versioned machine errors with stable exit 
   };
   assert.match(renderResult('status', status, { json: false, verbose: false }), /sample · hardened · checkout approved/);
   assert.match(renderResult('status', status, { json: false, verbose: false }), /vercel · healthy/);
-  assert.deepEqual(JSON.parse(renderResult('status', status, { json: true, verbose: false })), status);
+  assert.deepEqual(JSON.parse(renderResult('status', status, { json: true, verbose: false })), {
+    ...status, state: 'complete', complete: true, nextActions: [],
+  });
 
   const rendered = renderError(new InframuxError('CHECKOUT_NOT_APPROVED', 'Exact checkout is not approved', {
     recovery: 'inframux trust approve request-123',
@@ -107,6 +115,32 @@ test('renders concise safe status and versioned machine errors with stable exit 
       message: 'Exact checkout is not approved',
       recovery: 'inframux trust approve request-123',
     },
+    state: 'failed',
+    complete: false,
+    nextActions: [{
+      type: 'recover', actor: 'agent', command: 'inframux trust approve request-123',
+      description: 'Recover from CHECKOUT_NOT_APPROVED.', interactive: false, privileged: false,
+    }],
   });
   assert.equal(rendered.text.includes('stack'), false);
+});
+
+test('resolves nested help before validating required session identifiers', () => {
+  assert.deepEqual(parseCli(['onboard', 'authorize', '--help']), {
+    command: 'help', json: false, verbose: false,
+  });
+  const help = resolveCommandHelp(['onboard', 'authorize', '--help']);
+  assert.ok(help);
+  const text = renderCommandHelp(help);
+  assert.match(text, /^Usage: inframux onboard authorize <session-id>/m);
+  assert.match(text, /interactive Terminal/i);
+  assert.match(text, /Example:/);
+  assert.doesNotMatch(text, /Invalid request ID/);
+});
+
+test('renders goal-oriented root and trust preparation help', () => {
+  assert.match(renderCommandHelp(resolveCommandHelp([])!), /Set up a project/);
+  const trust = renderCommandHelp(resolveCommandHelp(['trust', 'prepare-checkout', '-h'])!);
+  assert.match(trust, /Usage: inframux trust prepare-checkout <session-id> \[--apply\]/);
+  assert.match(trust, /minimal directory traversal/i);
 });

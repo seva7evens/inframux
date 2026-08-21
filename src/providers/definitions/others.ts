@@ -1,5 +1,6 @@
 import { capability, commonBlockedFlags } from '../capabilities.js';
 import type { ProviderDefinition } from '../types.js';
+import { stableResourceFingerprint } from '../resource-fingerprint.js';
 
 export const sentryProvider: ProviderDefinition = {
   id: 'sentry', displayName: 'Sentry', adapterVersion: 1,
@@ -18,7 +19,7 @@ export const uptimeRobotProvider: ProviderDefinition = {
   id: 'uptimerobot', displayName: 'UptimeRobot', adapterVersion: 1,
   credentialEnvironmentVariable: 'UPTIMEROBOT_API_KEY', executables: {},
   identity: {
-    operation: 'identity.verify', expectedFields: ['accountFingerprint'], maxAgeMs: 86_400_000,
+    operation: 'identity.verify', expectedFields: ['resourceFingerprint'], maxAgeMs: 86_400_000,
     deriveExpected: (service) => {
       const monitors = service.monitors ?? {};
       if (monitors === null || typeof monitors !== 'object') {
@@ -28,7 +29,7 @@ export const uptimeRobotProvider: ProviderDefinition = {
         if (typeof value !== 'string' || value.length === 0) throw new Error('UptimeRobot monitor IDs must be non-empty strings');
         return value;
       }).sort();
-      return Object.freeze({ accountFingerprint: `monitors:${ids.join(',')}` });
+      return Object.freeze({ resourceFingerprint: stableResourceFingerprint(ids) });
     },
   },
   recoveryCommand: 'inframux replace-token uptimerobot',

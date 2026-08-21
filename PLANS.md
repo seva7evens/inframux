@@ -21,6 +21,18 @@ needed.
 `docs/superpowers/specs/2026-08-19-unified-cli-journeys-design.md`. This roadmap
 tracks delivery order and acceptance gates.
 
+## Delivery status — 2026-08-19
+
+The unified journey implementation is delivered: canonical machine actions,
+human presenters, nested help, safe reconfiguration, finish reconciliation and
+replay, repository agent instructions, hardened checkout preflight/repair with
+owned ACL receipts, provider identity summaries, installed-package smoke, and
+the split `quality`/`security`/`journeys`/`package` CI matrix. The roadmap below
+is retained as design history. Shell completion remains a future catalog
+consumer and was explicitly outside the approved implementation. Richer
+provider-network categorization/retry copy remains a later independent product
+improvement; the current transport still fails closed without leaking causes.
+
 ## Live-journey findings incorporated into the roadmap
 
 A real multi-provider onboarding exposed state-machine and recovery gaps that

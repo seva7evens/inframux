@@ -11,6 +11,7 @@ npm run build
 npm test
 npm run test:coverage
 npm run test:e2e
+npm run test:journeys
 npm run test:bootstrap
 npm run test:package
 npm run scan:publication
@@ -46,6 +47,17 @@ tsc during bootstrap, starts the sealed broker/worker, checks the central
 Playwright doctor/API, proves the npm package tree was not mutated, and verifies
 preserving-state uninstall. This catches relocation, dependency-closure, npm
 `.bin`, lifecycle-script, and package-content defects source tests cannot expose.
+
+GitHub Actions exposes four independent required signals:
+
+- `quality` — typecheck, build, unit/integration tests, coverage, and central Playwright runtime;
+- `security` — publication policy, secret scanning, and high-severity dependency audit;
+- `journeys` — real PTY authorization, retry/reconciliation, broker/worker isolation, and bootstrap lifecycle;
+- `package` — npm pack, disposable global install, installed CLI journey smoke, and release artifact upload.
+
+Every job runs on `macos-15` with exact Node.js `24.18.1`, read-only repository
+permissions, pinned actions, a bounded timeout, and lifecycle scripts disabled
+during dependency installation.
 
 No test may contact a real provider or contain a real token/cookie/session.
 Use obvious `SYNTHETIC-*` canaries and assert they are absent from every

@@ -18,6 +18,7 @@ export type CliCommand =
   | ({ command: 'link'; project: string; repository: string; writeManifest: boolean } & CommonCliOptions)
   | ({ command: 'trust.approve'; requestId: string } & CommonCliOptions)
   | ({ command: 'trust.revoke'; repository: string } & CommonCliOptions)
+  | ({ command: 'trust.prepare-checkout'; sessionId: string; apply: boolean } & CommonCliOptions)
   | ({ command: 'auth.status'; project: string } & CommonCliOptions)
   | ({ command: 'auth.revoke'; project: string; provider: string } & CommonCliOptions)
   | ({ command: 'replace-token'; provider: string } & CommonCliOptions)
@@ -28,9 +29,14 @@ export type CliCommand =
   | ({ command: 'onboard.resume' | 'onboard.finish'; sessionId: string } & CommonCliOptions)
   | ({ command: 'onboard.authorize'; sessionId: string; oauthClientJson?: string } & CommonCliOptions)
   | ({ command: 'prompt.onboarding' } & CommonCliOptions)
+  | ({ command: 'agent-instructions' } & CommonCliOptions)
   | ({ command: 'help' } & CommonCliOptions);
 
 export function parseCli(argv: readonly string[]): CliCommand {
+  if (resolveCommandHelp(argv) !== undefined) {
+    const { json, verbose } = common(argv.filter((value) => value !== '--help' && value !== '-h' && value !== 'help'));
+    return { command: 'help', json, verbose };
+  }
   const { args, json, verbose } = common(argv);
   const shared = { json, verbose };
   const [first, second, third] = args;
@@ -124,6 +130,9 @@ export function parseCli(argv: readonly string[]): CliCommand {
       if (second !== 'onboarding') throw new Error('Unknown prompt command');
       noExtra(args, 2);
       return { command: 'prompt.onboarding', ...shared };
+    case 'agent-instructions':
+      noExtra(args, 1);
+      return { command: 'agent-instructions', ...shared };
     case 'launch':
       if (second !== 'mcp') throw new Error('Unknown launch command');
       noExtra(args, 3);
@@ -183,6 +192,13 @@ export function parseCli(argv: readonly string[]): CliCommand {
       return { command: 'link', project, repository, writeManifest, ...shared };
     }
     case 'trust': {
+      if (second === 'prepare-checkout') {
+        const sessionId = uuid(required(third, 'trust prepare-checkout requires a session ID'));
+        if (args.length > 4 || (args[3] !== undefined && args[3] !== '--apply')) {
+          throw new Error(`Unknown option for trust prepare-checkout: ${args[3]}`);
+        }
+        return { command: 'trust.prepare-checkout', sessionId, apply: args[3] === '--apply', ...shared };
+      }
       if (second === 'approve') {
         const requestId = uuid(required(third, 'trust approve requires a request ID'));
         noExtra(args, 3);
@@ -279,3 +295,4 @@ function uuid(value: string): string {
   }
   return value.toLowerCase();
 }
+import { resolveCommandHelp } from './command-catalog.js';

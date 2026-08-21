@@ -30,7 +30,7 @@ const BLOCKED_TOKEN_FINGERPRINTS = new Set([
   '17f3e8453c5ccbd4977a93c5ee4c68275e0b830a2a3c6c15ad4813f64045485c',
   'e9abaffdafecba64f5bd9084895b89e16a05d47bd5d0256280dee9949c400a18',
 ]);
-const PRIVATE_PATH = /^(?:PROJECTS\.md|projects\/|examples\/|docs\/(?:migration-inventory\.md|reports\/|superpowers\/)|bin\/agent-playwright$)/u;
+const PRIVATE_PATH = /^(?:PROJECTS\.md|projects\/|examples\/|docs\/(?:migration-inventory\.md|reports\/)|bin\/agent-playwright$)/u;
 const LOCAL_HOME = /(?:^|[^A-Za-z0-9])\/Users\/[A-Za-z0-9._-]+\//u;
 const PERSONAL_EMAIL = /\b[A-Z0-9._%+-]+@(?:gmail|outlook|hotmail|icloud|yahoo|protonmail)\.[A-Z]{2,}\b/iu;
 const TOKEN = /[A-Za-z0-9][A-Za-z0-9._@-]{2,}/gu;

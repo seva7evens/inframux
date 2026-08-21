@@ -3,17 +3,22 @@ name: ci
 on:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
 jobs:
-  verify:
+  quality:
+    name: Source quality and coverage
     runs-on: macos-15
-    timeout-minutes: 30
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -24,9 +29,70 @@ jobs:
           cache: npm
       - name: Install exact development graph
         run: npm ci --ignore-scripts
-      - name: Verify source, publication safety, security, lifecycle, and installed package
-        run: npm run verify
-      - name: Build validated npm artifact
+      - name: Typecheck and build
+        run: npm run check && npm run build
+      - name: Unit and integration tests
+        run: npm test
+      - name: Coverage thresholds
+        run: npm run test:coverage
+      - name: Central Playwright runtime tests
+        run: npm run test:runtime
+
+  security:
+    name: Security and publication policy
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.1
+          cache: npm
+      - name: Install exact development graph
+        run: npm ci --ignore-scripts
+      - name: Scan public source and credentials
+        run: npm run scan:publication && npm run scan:secrets
+      - name: Reject high-severity dependency findings
+        run: npm run audit:deps
+
+  journeys:
+    name: CLI journeys and macOS lifecycle
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.1
+          cache: npm
+      - name: Install exact development graph
+        run: npm ci --ignore-scripts
+      - name: Run human, JSON, retry, recovery, and isolation journeys
+        run: npm run test:journeys
+      - name: Run sealed bootstrap lifecycle
+        run: npm run test:bootstrap
+
+  package:
+    name: Installed npm package
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.1
+          cache: npm
+      - name: Install exact development graph
+        run: npm ci --ignore-scripts
+      - name: Test the packed and globally installed consumer artifact
+        run: npm run test:package
+      - name: Build the validated release artifact
         run: |
           mkdir -p "$RUNNER_TEMP/inframux-package"
           npm pack --pack-destination "$RUNNER_TEMP/inframux-package"

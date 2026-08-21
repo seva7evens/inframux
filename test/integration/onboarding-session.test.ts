@@ -12,7 +12,7 @@ const evidence = {
   normalizedRemotes: ['github.com/acme/example'],
 };
 
-test('persists private owner-bound onboarding sessions and idempotent configuration', async (t) => {
+test('persists private owner-bound onboarding sessions and replaces only unverified configuration', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-onboarding-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = new OnboardingSessionStore({ stateRoot: root, now: () => new Date('2026-08-19T10:00:00Z') });
@@ -24,7 +24,13 @@ test('persists private owner-bound onboarding sessions and idempotent configurat
   const configured = await store.configure(created.id, 501, 'cloudflare', { credential: 'cloudflare-admin', accountId: 'one' });
   assert.deepEqual(configured.services.cloudflare?.config, { credential: 'cloudflare-admin', accountId: 'one' });
   assert.deepEqual(await store.configure(created.id, 501, 'cloudflare', { credential: 'cloudflare-admin', accountId: 'one' }), configured);
-  await assert.rejects(store.configure(created.id, 501, 'cloudflare', { credential: 'cloudflare-admin', accountId: 'two' }), /already configured/i);
+  const corrected = await store.configure(created.id, 501, 'cloudflare', { credential: 'cloudflare-admin', accountId: 'two' });
+  assert.deepEqual(corrected.services.cloudflare?.config, { credential: 'cloudflare-admin', accountId: 'two' });
+  await store.markVerified(created.id, 501, 'cloudflare', 'cloudflare-admin');
+  await assert.rejects(
+    store.configure(created.id, 501, 'cloudflare', { credential: 'cloudflare-admin', accountId: 'three' }),
+    (error: unknown) => error instanceof Error && 'code' in error && error.code === 'PROVIDER_ALREADY_VERIFIED',
+  );
 });
 
 test('expires mutation after 24 hours and refuses incomplete completion', async (t) => {

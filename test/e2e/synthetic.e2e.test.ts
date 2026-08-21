@@ -14,10 +14,17 @@ test('runs the compiled CLI through separate broker and worker processes with tw
   assert.equal(JSON.parse(bootstrap.stdout).mode, 'user');
   assert.equal(/launch-daemon/i.test(bootstrap.stdout), false);
 
+  const nestedHelp = await system.run('alpha', ['onboard', 'authorize', '--help']);
+  assert.equal(nestedHelp.code, 0, nestedHelp.stderr);
+  assert.match(nestedHelp.stdout, /Usage: inframux onboard authorize <session-id>/);
+
+  const sessionIds: Partial<Record<'alpha' | 'beta', string>> = {};
+
   for (const project of ['alpha', 'beta'] as const) {
     const started = await system.run(project, ['onboard', 'start', '--services', 'synthetic', '--json']);
     assert.equal(started.code, 0, started.stderr);
     const session = JSON.parse(started.stdout) as { id: string; project: string; plan: Array<{ id: string }> };
+    sessionIds[project] = session.id;
     assert.equal(session.project, `e2e-${project}`);
     assert.deepEqual(session.plan.map((item) => item.id), ['synthetic']);
     const configured = await system.run(project, [
@@ -25,20 +32,53 @@ test('runs the compiled CLI through separate broker and worker processes with tw
       JSON.stringify({ accountId: `account-${project}` }), '--json',
     ]);
     assert.equal(configured.code, 0, configured.stderr);
-    const enrolled = await system.run(project, ['enroll', `e2e-${project}`, '--service', 'synthetic'], `${system.tokens[project]}\n`);
-    assert.equal(enrolled.code, 0, enrolled.stderr);
-    assert.equal(enrolled.stdout.includes(system.tokens[project]), false);
+    if (project === 'alpha') {
+      const rejected = await system.runInteractive(project, ['onboard', 'authorize', session.id], 'account:wrong:SYNTHETIC-REJECTED-CANARY');
+      assert.equal(rejected.code, 31, rejected.stderr);
+      assert.equal(`${rejected.stdout}${rejected.stderr}`.includes('SYNTHETIC-REJECTED-CANARY'), false);
+      const authorized = await system.runInteractive(project, ['onboard', 'authorize', session.id], system.tokens[project]);
+      assert.equal(authorized.code, 0, authorized.stderr);
+      assert.match(authorized.stdout, /1 of 1 services connected/);
+      assert.match(authorized.stdout, /onboard finish/);
+      assert.equal(`${authorized.stdout}${authorized.stderr}`.includes(system.tokens[project]), false);
+    } else {
+      // Simulate interruption after the credential is durably enrolled but before
+      // the onboarding session records provider verification.
+      const enrolled = await system.run(project, ['enroll', `e2e-${project}`, '--service', 'synthetic'], `${system.tokens[project]}\n`);
+      assert.equal(enrolled.code, 0, enrolled.stderr);
+      assert.equal(enrolled.stdout.includes(system.tokens[project]), false);
+    }
     const status = await system.run(project, ['status', '--json']);
     assert.equal(status.code, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout).project, `e2e-${project}`);
-    assert.match(status.stdout, new RegExp(`account-${project}`));
-    const resumed = await system.run(project, ['onboard', 'resume', session.id, '--json']);
-    assert.equal(resumed.code, 0, resumed.stderr);
-    assert.equal(JSON.parse(resumed.stdout).services.synthetic.profile, `e2e-${project}-synthetic-admin`);
+    const statusResult = JSON.parse(status.stdout);
+    assert.equal(statusResult.project, `e2e-${project}`);
+    assert.match(JSON.stringify(statusResult), new RegExp(`account-${project}`));
+    if (project === 'alpha') {
+      const resumed = await system.run(project, ['onboard', 'resume', session.id, '--json']);
+      assert.equal(resumed.code, 0, resumed.stderr);
+      assert.equal(JSON.parse(resumed.stdout).services.synthetic.profile, `e2e-${project}-synthetic-admin`);
+    }
     const finished = await system.run(project, ['onboard', 'finish', session.id, '--json']);
     assert.equal(finished.code, 0, finished.stderr);
-    assert.equal(JSON.parse(finished.stdout).complete, true);
+    const completion = JSON.parse(finished.stdout);
+    assert.equal(completion.complete, true);
+    assert.match(completion.agentInstructions, /inframux/);
+    const repeated = await system.run(project, ['onboard', 'finish', session.id, '--json']);
+    assert.equal(repeated.code, 0, repeated.stderr);
+    assert.deepEqual(JSON.parse(repeated.stdout), completion);
   }
+
+  const access = await system.run('alpha', ['trust', 'prepare-checkout', sessionIds.alpha!, '--json']);
+  assert.equal(access.code, 0, access.stderr);
+  const accessResult = JSON.parse(access.stdout);
+  assert.equal(accessResult.schema, 1);
+  assert.equal(accessResult.ready, true);
+  assert.equal(accessResult.principal, '_inframux');
+  assert.deepEqual(accessResult.ancestors, []);
+  assert.equal(accessResult.repositoryRoot, system.repositories.alpha);
+  assert.equal(accessResult.state, 'healthy');
+  assert.equal(accessResult.complete, true);
+  assert.deepEqual(accessResult.nextActions, []);
 
   await system.restart();
   for (const project of ['alpha', 'beta'] as const) {
@@ -91,6 +131,8 @@ test('runs the compiled CLI through separate broker and worker processes with tw
   assert.equal(revoked.code, 0, revoked.stderr);
   const missingAfterRevoke = await system.run('alpha', ['call', 'synthetic', 'resources.list', '--input-json', '{}', '--json']);
   assert.equal(missingAfterRevoke.code, 30, missingAfterRevoke.stderr);
+  assert.equal(missingAfterRevoke.stderr, '');
+  assert.equal(JSON.parse(missingAfterRevoke.stdout).error.code, 'CREDENTIAL_MISSING');
   const betaAfterAlphaRevoke = await system.run('beta', ['call', 'synthetic', 'resources.list', '--input-json', '{}', '--json']);
   assert.equal(betaAfterAlphaRevoke.code, 0, betaAfterAlphaRevoke.stderr);
 
@@ -98,6 +140,8 @@ test('runs the compiled CLI through separate broker and worker processes with tw
   await cp(system.repositories.alpha, copied, { recursive: true });
   const copiedResult = await system.runAt(copied, ['status', '--json']);
   assert.equal(copiedResult.code, 12, copiedResult.stderr);
+  assert.equal(copiedResult.stderr, '');
+  assert.equal(JSON.parse(copiedResult.stdout).error.code, 'CHECKOUT_NOT_APPROVED');
 
   const audit = await system.run('alpha', ['audit', 'verify', '--json']);
   assert.equal(audit.code, 0, audit.stderr);

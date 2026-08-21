@@ -7,9 +7,20 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-21 — Release 0.1.1 and hardened runtime activation
+
+**Status:** In progress
+
+**Scope:** Prepare the completed unified CLI journeys for release `0.1.1`,
+limit automatic CI to pushes on `main`, verify the feature branch, merge it
+into `main`, build and globally install the reviewed npm tarball with exact
+Node.js `24.18.1`, activate the same release through hardened bootstrap while
+preserving broker state, and black-box verify that the active runtime and
+system `current` link both resolve to `0.1.1`.
+
 ## 2026-08-19 — Unified CLI journey contract
 
-**Status:** Implementation planned
+**Status:** Implemented; final verification recorded below
 
 **Scope:** Turn every inframux command into a coherent human and machine
 journey, beginning with the live onboarding failures observed during a
@@ -37,14 +48,38 @@ security tests.
   contradiction between onboarding completion and later health checks,
   required an action on every incomplete error, and documented UptimeRobot's
   identity limitation without claiming unverified administrative scope.
-- Runtime implementation has not started. The written-spec review gate
-  precedes the TDD implementation plan.
+- Implemented the public journey/action model and additive JSON/error envelope,
+  then generated human output from the same canonical state.
+- Added nested catalog help, safe pre-verification reconfiguration, internal
+  finish reconciliation, replay-safe completion, and repository-bound agent
+  instructions.
+- Added TTY-gated progress, ASCII/`TERM=dumb` behavior, signal cleanup, hidden
+  credential input lifecycle, and accurate saved/not-saved failure copy.
+- Added hardened checkout traversal diagnosis and preview/apply repair. The
+  privileged helper accepts only the fixed principal and standard target,
+  records session/inode/device-bound ACL receipts, and removes only owned ACLs.
+- Replaced raw operational JSON in human mode with bounded presenters and
+  corrected UptimeRobot identity reporting to a keyed credential fingerprint,
+  monitor count, and mutable resource digest.
+- Added a real macOS PTY synthetic journey covering failure/retry, interrupted
+  authorization reconciliation, repeated finish, nested help, process restart,
+  project isolation, and trust preflight. Added an installed-artifact journey
+  smoke that rejects malformed machine JSON.
+- Split CI into least-privilege `quality`, `security`, `journeys`, and `package`
+  jobs on exact Node.js 24.18.1 with pinned actions and bounded timeouts.
 - The user approved the written spec. Added and self-reviewed the executable
   TDD plan at
   `docs/superpowers/plans/2026-08-19-unified-cli-journeys.md`, covering nine
   independently testable deliveries from public contracts through packaged
   E2E and CI. Inline execution was selected because project policy forbids
   subagent delegation.
+- Final exact Node.js 24.18.1 verification passed: 143/143 unit/integration
+  tests, 95.82% lines / 92.82% functions / 80.67% branches, real-PTY synthetic
+  multi-process journeys, fresh user-mode bootstrap, installed-package consumer
+  smoke, publication and secret scans over 182 tracked files, dependency audit
+  with zero vulnerabilities, and 15/15 central Playwright runtime tests. The
+  validated npm archive contains 380 files and is 199016 bytes packed / 986825
+  bytes unpacked.
 
 ## 2026-08-19 — CLI user experience roadmap
 

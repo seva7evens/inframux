@@ -43,6 +43,8 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
   assert.deepEqual(started.plan.map(({ id, auth, requiredConfig }) => ({ id, auth, requiredConfig })), [
     { id: 'synthetic', auth: 'static-token', requiredConfig: ['accountId'] },
   ]);
+  assert.equal((started as unknown as { state: string }).state, 'configuration-required');
+  assert.match((started as unknown as { nextActions: Array<{ command: string }> }).nextActions[0]!.command, /onboard configure/);
   await assert.rejects(fixture.broker.handle('onboarding.status', { sessionId: started.id }, {
     callerUid: fixture.context().callerUid + 1, signal: new AbortController().signal,
   }), /different user/i);
@@ -50,6 +52,7 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
     sessionId: started.id, provider: 'synthetic', input: { accountId: 'account-sample' },
   }, fixture.context()) as { services: Record<string, { config?: unknown }> };
   assert.deepEqual(configured.services.synthetic?.config, { credential: 'sample-app-synthetic-admin', accountId: 'account-sample' });
+  assert.equal((configured as unknown as { state: string }).state, 'authorization-required');
   await fixture.broker.handle('credential.enroll', {
     project: 'sample-app', provider: 'synthetic', credentialType: 'administrative-token',
     secretBase64: Buffer.from(token).toString('base64'),
@@ -61,6 +64,71 @@ test('orchestrates dynamic onboarding without package-baked project logic', asyn
   const finished = await fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()) as { complete: boolean };
   assert.equal(finished.complete, true);
   assert.equal((await fixture.ledger.find(fixture.evidence.repositoryRoot))?.project, 'sample-app');
+});
+
+test('finishes without explicit resume and replays canonical agent instructions', async (t) => {
+  const fixture = await setupBroker(t);
+  const started = await fixture.broker.handle('onboarding.start', {
+    project: 'sample-app', displayName: 'Sample management', providers: ['synthetic'],
+    evidence: fixture.evidence, workspaceRoot: fixture.root,
+  }, fixture.context()) as { id: string };
+  await fixture.broker.handle('onboarding.configure', {
+    sessionId: started.id, provider: 'synthetic', input: { accountId: 'account-sample' },
+  }, fixture.context());
+  await assert.rejects(
+    fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()),
+    (error: unknown) => error instanceof InframuxError && error.code === 'SESSION_AUTHORIZATION_REQUIRED' &&
+      error.recovery === `inframux onboard authorize ${started.id}`,
+  );
+  await fixture.broker.handle('credential.enroll', {
+    project: 'sample-app', provider: 'synthetic', credentialType: 'administrative-token',
+    secretBase64: Buffer.from(token).toString('base64'),
+  }, fixture.context());
+
+  const first = await fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()) as {
+    complete: boolean; state: string; agentInstructions: string; nextActions: unknown[];
+  };
+  const repeated = await fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context());
+  const resumed = await fixture.broker.handle('onboarding.resume', { sessionId: started.id }, fixture.context());
+  assert.equal(first.complete, true);
+  assert.equal(first.state, 'complete');
+  assert.match(first.agentInstructions, /Available provider contexts: synthetic/);
+  assert.equal(first.nextActions.length, 3);
+  assert.deepEqual(repeated, first);
+  assert.deepEqual(resumed, first);
+});
+
+test('reports hardened checkout access before authorization and blocks finish with one recovery action', async (t) => {
+  const fixture = await setupBroker(t, undefined, undefined, async (repositoryRoot) => ({
+    ready: false as const, inaccessibleAncestor: path.dirname(repositoryRoot),
+  }), 'hardened');
+  const started = await fixture.broker.handle('onboarding.start', {
+    project: 'sample-app', displayName: 'Sample management', providers: ['synthetic'],
+    evidence: fixture.evidence, workspaceRoot: fixture.root,
+  }, fixture.context()) as { id: string; state: string; nextActions: Array<{ command: string }> };
+  assert.equal(started.state, 'checkout-access-required');
+  assert.equal(started.nextActions[0]!.command, `inframux trust prepare-checkout ${started.id}`);
+
+  const configured = await fixture.broker.handle('onboarding.configure', {
+    sessionId: started.id, provider: 'synthetic', input: { accountId: 'account-sample' },
+  }, fixture.context()) as { state: string; nextActions: Array<{ command: string }> };
+  assert.equal(configured.state, 'checkout-access-required');
+  const status = await fixture.broker.handle('onboarding.status', { sessionId: started.id }, fixture.context()) as {
+    state: string; nextActions: Array<{ command: string }>;
+  };
+  assert.equal(status.state, 'checkout-access-required');
+  assert.equal(status.nextActions[0]!.command, `inframux trust prepare-checkout ${started.id}`);
+
+  const preview = await fixture.broker.handle('onboarding.checkout-access', { sessionId: started.id }, fixture.context()) as {
+    ready: boolean; ancestors: string[]; principal: string;
+  };
+  assert.deepEqual(preview.ancestors, [path.dirname(fixture.evidence.repositoryRoot)]);
+  assert.equal(preview.principal, '_inframux');
+  await assert.rejects(
+    fixture.broker.handle('onboarding.finish', { sessionId: started.id }, fixture.context()),
+    (error: unknown) => error instanceof InframuxError && error.code === 'BROKER_CHECKOUT_INACCESSIBLE' &&
+      error.recovery === `inframux trust prepare-checkout ${started.id}`,
+  );
 });
 
 test('derives provider identity pins from non-secret onboarding configuration before authorization', async (t) => {
@@ -87,7 +155,7 @@ test('derives provider identity pins from non-secret onboarding configuration be
     project: 'sample-app', provider: 'uptimerobot',
   }, fixture.context()), {
     schema: 1, project: 'sample-app', provider: 'uptimerobot',
-    expectedIdentity: { accountFingerprint: 'monitors:100000001,200000002' }, scopes: [],
+    expectedIdentity: { resourceFingerprint: 'sha256:7fa6f7411457d2b8d30dbbdd6d62e999ba3e240ddbc2f4c6c8d5019937c5df98' }, scopes: [],
   });
 });
 
@@ -377,6 +445,8 @@ async function setupBroker(
   t: TestContext,
   productionAdapter?: ProviderAdapter,
   googleRefresh?: (credential: OAuthCredential, signal: AbortSignal) => Promise<OAuthRefreshResult>,
+  checkoutAccess?: (repositoryRoot: string, gitCommonDir: string) => Promise<{ ready: true } | { ready: false; inaccessibleAncestor: string }>,
+  securityMode: 'hardened' | 'user' = 'user',
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-broker-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -447,13 +517,14 @@ async function setupBroker(
     allowedOwnerUids: [process.getuid!()], redactor, terminationGraceMs: 10,
   });
   const broker = new Broker({
-    securityMode: 'user', ledger, catalogs, credentials, audit: auditSink,
+    securityMode, ledger, catalogs, credentials, audit: auditSink,
     providers: createProviderRegistry(), worker: new LocalWorkerExecutor(runner, mcp),
     adapters: new ProviderAdapterRegistry(productionAdapter === undefined ? [] : [productionAdapter]),
     ...(googleRefresh === undefined ? {} : { googleRefresh }),
     pendingTrust: new PendingTrustStore({ stateRoot: state }),
     onboarding: new OnboardingSessionStore({ stateRoot: state }),
     redactor,
+    ...(checkoutAccess === undefined ? {} : { checkoutAccess }),
   });
   return {
     root, repository, evidence, manifest, broker, audit, auditSink, credentials, ledger,

@@ -9,6 +9,8 @@ import {
   applyHardenedBootstrap,
   applyHardenedRollback,
   applyHardenedUninstall,
+  applyCheckoutAccess,
+  readCheckoutAccessRequest,
   readMaintenanceRequest,
   readManagementRequest,
 } from '../install/management.js';
@@ -20,13 +22,15 @@ export async function managementMain(
   assertRuntimeVersion();
   if (process.platform !== 'darwin') throw new Error('The hardened management helper supports macOS only');
   if (process.getuid?.() !== 0) throw new Error('The hardened management helper must run as root via sudo');
-  if (argv.length !== 2 || !['bootstrap', 'rollback', 'uninstall'].includes(argv[0] ?? '') || !argv[1]?.startsWith('/')) {
-    throw new Error('Usage: inframux-manage bootstrap|rollback|uninstall /absolute/private-request.json');
+  if (argv.length !== 2 || !['bootstrap', 'rollback', 'uninstall', 'checkout-access'].includes(argv[0] ?? '') || !argv[1]?.startsWith('/')) {
+    throw new Error('Usage: inframux-manage bootstrap|rollback|uninstall|checkout-access /absolute/private-request.json');
   }
   const requestFile = await realpath(argv[1]);
   const request = argv[0] === 'bootstrap'
     ? await readManagementRequest(requestFile)
-    : await readMaintenanceRequest(requestFile);
+    : argv[0] === 'checkout-access'
+      ? await readCheckoutAccessRequest(requestFile)
+      : await readMaintenanceRequest(requestFile);
   if (request.targetRoot !== '/Library/Application Support/inframux') {
     throw new Error('Production management helper refuses a non-standard hardened install root');
   }
@@ -39,6 +43,8 @@ export async function managementMain(
   const system = new MacOsManagementSystem();
   const result = request.operation === 'bootstrap'
     ? await applyHardenedBootstrap(request, system)
+    : request.operation === 'checkout-access'
+      ? await applyCheckoutAccess(request, system)
     : request.operation === 'rollback'
       ? await applyHardenedRollback(request, system)
       : await applyHardenedUninstall(request, system);

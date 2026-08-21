@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { HttpTransport } from '../http-transport.js';
 import { assertFound, bearer, genericApiCall } from './shared.js';
 import type { ProviderAdapter } from './types.js';
+import { stableResourceFingerprint } from '../resource-fingerprint.js';
 
 const monitorsSchema = z.union([
   z.record(z.string(), z.string().min(1)),
@@ -26,7 +27,10 @@ export function uptimeRobotAdapter(transport: HttpTransport, origin: string): Pr
       const monitorIds = Object.values(service.monitors).sort();
       for (const id of monitorIds) assertFound(response.data.some((monitor) => String(monitor.id) === id), 'UptimeRobot', `monitor ${id}`);
       return {
-        identity: Object.freeze({ accountFingerprint: `monitors:${monitorIds.join(',')}` }),
+        identity: Object.freeze({
+          resourceFingerprint: stableResourceFingerprint(monitorIds),
+          monitorCount: String(response.data.length),
+        }),
         resources: { monitors: response.data.map((monitor) => ({ id: String(monitor.id), name: monitor.friendly_name ?? monitor.name ?? '' })) },
       };
     },

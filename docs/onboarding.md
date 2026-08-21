@@ -48,12 +48,30 @@ inframux prompt onboarding
    Submit them with `onboard configure`. Never place credentials in JSON.
 3. Give the user the exact `onboard authorize <session>` command. For Google,
    append `--oauth-client-json /absolute/desktop-client.json`.
-4. After the user confirms completion, run `onboard resume <session> --json`.
-   Resume is safe after cancellation or disconnect and recognizes credentials
-   already committed by the broker.
-5. Run `onboard finish`. It succeeds only when every requested provider is
-   verified and then trusts the exact checkout captured at start.
-6. Run status, doctor, and audit verification from the repository.
+4. After the user confirms completion, run `onboard finish <session> --json`.
+   Finish performs reconciliation itself, recognizes credentials committed
+   before a disconnect, and is safe to repeat. `onboard resume` remains an
+   optional read/recovery command; it is never a required hidden transition.
+5. If the hardened broker cannot traverse a private checkout ancestor, preview
+   `trust prepare-checkout <session>` and give the user its exact `--apply`
+   command. The helper grants only search to `_inframux`, records inode/device
+   ownership receipts, and never takes ownership of a matching pre-existing ACL.
+6. Run status, doctor, and audit verification from the repository, then obtain
+   canonical repository instructions with `agent-instructions` when needed.
+
+## Journey states and recovery
+
+Machine mode always returns `state`, `complete`, and ordered `nextActions`.
+The normal onboarding states are `configuration-required`,
+`authorization-required`, `ready-to-finish`, `checkout-access-required`, and
+`complete`. Run the returned command exactly; do not infer an ambient account.
+
+Configuration may be corrected or replaced until that provider is verified.
+An exact repeat is a no-op. After verification it is immutable in that session;
+start a new session for a deliberate identity change. A failed credential
+identity check leaves the previous credential unchanged. If enrollment was
+saved but the session marker failed, the Terminal explicitly says it was saved
+and `finish` reconciles it without asking for the credential again.
 
 ## Account isolation and reuse
 

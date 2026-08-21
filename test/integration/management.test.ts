@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readlink, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readlink, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,10 +9,37 @@ import {
   applyHardenedBootstrap,
   applyHardenedRollback,
   applyHardenedUninstall,
+  applyCheckoutAccess,
+  readCheckoutAccessRequest,
+  writeCheckoutAccessRequest,
   readManagementRequest,
   writeManagementRequest,
   type ManagementSystem,
 } from '../../src/install/management.js';
+
+test('applies only a session-bound search ACL to checkout ancestors', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-checkout-access-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repositoryInput = path.join(root, 'private', 'repository');
+  await mkdir(repositoryInput, { recursive: true });
+  const repository = await realpath(repositoryInput);
+  const ancestor = await realpath(path.dirname(repository));
+  const requestFile = path.join(root, 'request.json');
+  const uid = process.getuid!(); const gid = process.getgid!();
+  await writeCheckoutAccessRequest(requestFile, {
+    schema: 1, operation: 'checkout-access', targetRoot: '/Library/Application Support/inframux',
+    sessionId: '018f47d2-8737-7a19-8000-123456789abc', principal: '_inframux',
+    repositoryRoot: repository, gitCommonDir: path.join(repository, '.git'), ancestors: [ancestor],
+    caller: { uid, gid, username: os.userInfo().username },
+  });
+  const request = await readCheckoutAccessRequest(requestFile);
+  const system = new FakeManagementSystem(uid, gid);
+  const result = await applyCheckoutAccess(request, system);
+  assert.deepEqual(result, { schema: 1, prepared: true, principal: '_inframux', ancestors: [ancestor] });
+  assert.deepEqual(system.checkoutAncestors, [ancestor]);
+
+  await assert.rejects(applyCheckoutAccess({ ...request, ancestors: ['/tmp'] }, system), /checkout ancestor/i);
+});
 
 test('applies hardened release through a narrow management boundary and probes both services', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-management-'));
@@ -52,7 +79,7 @@ test('applies hardened release through a narrow management boundary and probes b
     caller: { uid, gid, username: os.userInfo().username },
   }, system);
   assert.equal(uninstalled.uninstalled, true);
-  assert.deepEqual(system.events, ['stop', 'remove']);
+  assert.deepEqual(system.events, ['revoke-checkout-access', 'stop', 'remove']);
 });
 
 test('rejects management requests that break caller and root ownership invariants', async (t) => {
@@ -95,6 +122,7 @@ test('rejects management requests that break caller and root ownership invariant
 class FakeManagementSystem implements ManagementSystem {
   readonly events: string[] = [];
   plists?: { broker: string; worker: string };
+  checkoutAncestors: string[] = [];
   constructor(readonly uid: number, readonly gid: number) {}
   async fileVaultStatus() { this.events.push('filevault'); return 'ready' as const; }
   async ensureServiceAccounts() {
@@ -108,4 +136,6 @@ class FakeManagementSystem implements ManagementSystem {
   async probeServices() { this.events.push('probe'); return true; }
   async stopServices() { this.events.push('stop'); }
   async removeInstallation() { this.events.push('remove'); }
+  async grantCheckoutAccess(_targetRoot: string, ancestors: readonly string[], _sessionId: string) { this.checkoutAncestors.push(...ancestors); }
+  async revokeOwnedCheckoutAccess() { this.events.push('revoke-checkout-access'); }
 }

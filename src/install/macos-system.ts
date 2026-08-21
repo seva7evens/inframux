@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, chown, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -129,6 +130,66 @@ export class MacOsManagementSystem implements ManagementSystem {
     }
   }
 
+  async grantCheckoutAccess(targetRoot: string, ancestors: readonly string[], sessionId: string): Promise<void> {
+    const receiptRoot = await ensureAclReceiptRoot(targetRoot);
+    for (const ancestor of ancestors) {
+      const stat = await canonicalDirectoryStat(ancestor);
+      const receiptFile = path.join(receiptRoot, `${createHash('sha256').update(ancestor).digest('hex')}.json`);
+      const existing = await readAclReceipt(receiptFile);
+      if (existing !== undefined) {
+        if (existing.ancestor !== ancestor || existing.dev !== String(stat.dev) || existing.ino !== String(stat.ino)) {
+          throw new Error(`Checkout ACL receipt does not match the current directory: ${ancestor}`);
+        }
+        continue;
+      }
+      const listing = await this.#execute('/bin/ls', ['-lde', ancestor]);
+      if (/^\s*\d+:\s+group:_inframux allow search\s*$/mu.test(listing.stdout)) continue;
+      await this.#execute('/bin/chmod', ['+a', 'group:_inframux allow search', ancestor]);
+      try {
+        await writeAclReceipt(receiptFile, {
+          schema: 1, principal: '_inframux', sessionId, ancestor,
+          dev: String(stat.dev), ino: String(stat.ino),
+        });
+      } catch (error) {
+        await this.#execute('/bin/chmod', ['-a', 'group:_inframux allow search', ancestor]).catch(() => undefined);
+        throw error;
+      }
+    }
+  }
+
+  async revokeOwnedCheckoutAccess(targetRoot: string): Promise<void> {
+    const receiptRoot = path.join(targetRoot, 'acl-receipts');
+    let entries;
+    try {
+      const rootStat = await lstat(receiptRoot);
+      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Checkout ACL receipt root is unsafe');
+      entries = await readdir(receiptRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || entry.isSymbolicLink() || !/^[a-f0-9]{64}\.json$/u.test(entry.name)) {
+        throw new Error(`Unsafe checkout ACL receipt entry: ${entry.name}`);
+      }
+      const receiptFile = path.join(receiptRoot, entry.name);
+      const receipt = await readAclReceipt(receiptFile);
+      if (receipt === undefined || `${createHash('sha256').update(receipt.ancestor).digest('hex')}.json` !== entry.name) {
+        throw new Error(`Invalid checkout ACL receipt: ${entry.name}`);
+      }
+      try {
+        const stat = await canonicalDirectoryStat(receipt.ancestor);
+        if (String(stat.dev) === receipt.dev && String(stat.ino) === receipt.ino) {
+          await this.#execute('/bin/chmod', ['-a', 'group:_inframux allow search', receipt.ancestor]);
+        }
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      await rm(receiptFile);
+    }
+    await rmdir(receiptRoot);
+  }
+
   async #createGroup(name: string, gid: number): Promise<void> {
     await this.#execute('/usr/bin/dscl', ['.', '-create', `/Groups/${name}`]);
     await this.#execute('/usr/bin/dscl', ['.', '-create', `/Groups/${name}`, 'PrimaryGroupID', String(gid)]);
@@ -171,6 +232,65 @@ export function selectServiceIds(usedInput: readonly number[]): ServiceAccounts 
   }
   if (available.length < 3) throw new Error('No safe local service IDs are available in 200..399');
   return { groupGid: available[0]!, brokerUid: available[1]!, workerUid: available[2]! };
+}
+
+interface CheckoutAclReceipt {
+  readonly schema: 1;
+  readonly principal: '_inframux';
+  readonly sessionId: string;
+  readonly ancestor: string;
+  readonly dev: string;
+  readonly ino: string;
+}
+
+async function ensureAclReceiptRoot(targetRoot: string): Promise<string> {
+  if (!path.isAbsolute(targetRoot) || targetRoot === path.parse(targetRoot).root) throw new Error('ACL receipt target is unsafe');
+  const receiptRoot = path.join(targetRoot, 'acl-receipts');
+  await mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+  const stat = await lstat(receiptRoot);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Checkout ACL receipt root is unsafe');
+  await chmod(receiptRoot, 0o700);
+  return receiptRoot;
+}
+
+async function canonicalDirectoryStat(directory: string) {
+  if (!path.isAbsolute(directory) || directory === path.parse(directory).root || await realpath(directory) !== directory) {
+    throw new Error('Checkout ACL target must be a canonical absolute directory');
+  }
+  const stat = await lstat(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Checkout ACL target must be a canonical directory');
+  return stat;
+}
+
+async function readAclReceipt(filename: string): Promise<CheckoutAclReceipt | undefined> {
+  try {
+    const stat = await lstat(filename);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600 || stat.size > 16_384) {
+      throw new Error('Checkout ACL receipt is not a safe private regular file');
+    }
+    const value = JSON.parse(await readFile(filename, 'utf8')) as Partial<CheckoutAclReceipt>;
+    if (value.schema !== 1 || value.principal !== '_inframux' || typeof value.sessionId !== 'string' ||
+        !/^[0-9a-f-]{36}$/u.test(value.sessionId) || typeof value.ancestor !== 'string' ||
+        !path.isAbsolute(value.ancestor) || !/^\d+$/u.test(value.dev ?? '') || !/^\d+$/u.test(value.ino ?? '') ||
+        Object.keys(value).sort().join(',') !== 'ancestor,dev,ino,principal,schema,sessionId') {
+      throw new Error('Checkout ACL receipt schema is invalid');
+    }
+    return Object.freeze(value as CheckoutAclReceipt);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+async function writeAclReceipt(filename: string, receipt: CheckoutAclReceipt): Promise<void> {
+  let handle;
+  try {
+    handle = await open(filename, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    await handle.writeFile(`${JSON.stringify(receipt)}\n`, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle?.close();
+  }
 }
 
 function parseDirectoryIds(output: string): Map<string, number> {

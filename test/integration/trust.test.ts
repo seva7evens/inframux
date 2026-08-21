@@ -10,6 +10,7 @@ import { loadRepositoryManifest } from '../../src/config/load.js';
 import type { ProjectCatalog } from '../../src/config/schemas.js';
 import { collectCheckoutEvidence } from '../../src/git/evidence.js';
 import { TrustLedger } from '../../src/trust/ledger.js';
+import { planCheckoutAccess, probeCheckoutAccess } from '../../src/trust/access.js';
 import { resolveProjectContext } from '../../src/trust/resolve.js';
 
 const run = promisify(execFile);
@@ -112,6 +113,26 @@ test('uses the nearest Git root and rejects conflicting remotes and unapproved w
   await run('git', ['remote', 'add', 'upstream', 'https://github.com/another/repository.git'], { cwd: repository });
   const conflicting = await collectCheckoutEvidence(repository);
   await assert.rejects(() => resolveProjectContext({ evidence: conflicting, manifest, catalog, ledger }), /conflicting.*remote/i);
+});
+
+test('finds only the first inaccessible checkout ancestor and plans search-only repair', async () => {
+  const checked: string[] = [];
+  const report = await probeCheckoutAccess('/private-home/Documents/repo', '/private-home/Documents/repo/.git', async (candidate) => {
+    checked.push(candidate);
+    if (candidate === '/private-home/Documents') {
+      const error = new Error('denied') as NodeJS.ErrnoException;
+      error.code = 'EACCES';
+      throw error;
+    }
+  });
+  assert.deepEqual(checked, ['/private-home', '/private-home/Documents']);
+  assert.deepEqual(report, { ready: false, inaccessibleAncestor: '/private-home/Documents' });
+  assert.deepEqual(planCheckoutAccess({
+    repositoryRoot: '/private-home/Documents/repo', gitCommonDir: '/private-home/Documents/repo/.git', report,
+  }), {
+    ready: false, principal: '_inframux', ancestors: ['/private-home/Documents'],
+    repositoryRoot: '/private-home/Documents/repo', gitCommonDir: '/private-home/Documents/repo/.git',
+  });
 });
 
 async function createRepository(directory: string): Promise<string> {
