@@ -7,6 +7,17 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-21 — Release 0.1.1 and hardened runtime activation
+
+**Status:** In progress
+
+**Scope:** Prepare the completed unified CLI journeys for release `0.1.1`,
+limit automatic CI to pushes on `main`, verify the feature branch, merge it
+into `main`, build and globally install the reviewed npm tarball with exact
+Node.js `24.18.1`, activate the same release through hardened bootstrap while
+preserving broker state, and black-box verify that the active runtime and
+system `current` link both resolve to `0.1.1`.
+
 ## 2026-08-19 — Unified CLI journey contract
 
 **Status:** Implemented; final verification recorded below

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PACKAGE_NAME = 'inframux';
-const PACKAGE_VERSION = '0.1.0';
+const PACKAGE_VERSION = '0.1.1';
 const MAX_PACKED_BYTES = 5 * 1024 * 1024;
 const MAX_UNPACKED_BYTES = 20 * 1024 * 1024;
 const REQUIRED_ARCHIVE_PATHS = Object.freeze([
