@@ -80,7 +80,7 @@ runtime rather than relying on ambient shell command resolution:
 
 ```bash
 source "$HOME/.nvm/nvm.sh"
-nvm exec 24.18.1 npm install --global inframux@0.1.1
+nvm exec 24.18.1 npm install --global inframux@0.1.2
 nvm exec 24.18.1 inframux bootstrap --apply
 ```
 

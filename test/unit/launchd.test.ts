@@ -84,6 +84,42 @@ test('verifies existing macOS service identities through fixed system executable
   });
 });
 
+test('waits for launchd jobs to disappear before bootstrapping replacements', async () => {
+  const calls: string[] = [];
+  const visibleAfterBootout = new Map([
+    ['system/dev.inframux.worker', 1],
+    ['system/dev.inframux.broker', 1],
+  ]);
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    const call = `${executable} ${args.join(' ')}`;
+    calls.push(call);
+    if (executable === '/bin/launchctl' && args[0] === 'print') {
+      const target = args[1]!;
+      const remaining = visibleAfterBootout.get(target) ?? 0;
+      if (remaining > 0) {
+        visibleAfterBootout.set(target, remaining - 1);
+        return { stdout: `service = ${target}\n`, stderr: '' };
+      }
+      const error = Object.assign(new Error(`Could not find service ${target}`), {
+        code: 113,
+        stdout: '',
+        stderr: `Could not find service ${target}`,
+      });
+      throw error;
+    }
+    return { stdout: '', stderr: '' };
+  } });
+
+  await system.restartServices();
+
+  for (const target of ['system/dev.inframux.worker', 'system/dev.inframux.broker']) {
+    const lastPrint = calls.lastIndexOf(`/bin/launchctl print ${target}`);
+    const firstBootstrap = calls.findIndex((call) => call.startsWith('/bin/launchctl bootstrap system '));
+    assert.ok(lastPrint >= 0, `launchd removal was not observed for ${target}`);
+    assert.ok(lastPrint < firstBootstrap, `replacement bootstrap raced ${target} removal`);
+  }
+});
+
 test('records only an ACL it owns, retries idempotently, and removes it on cleanup', async (t) => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-acl-receipt-'));
   t.after(() => rm(targetRoot, { recursive: true, force: true }));

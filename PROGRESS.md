@@ -7,9 +7,39 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-21 — Hardened 0.1.1 launchd upgrade failure
+
+**Status:** Validated; awaiting live hardened bootstrap
+
+**Scope:** Diagnose the macOS `launchctl bootstrap system` input/output failure
+observed while upgrading the active hardened runtime from `0.1.0` to `0.1.1`.
+Preserve all credential, catalog, trust, audit, and browser state; capture the
+actual launchd/runtime state before changing code; add a regression test for
+the identified lifecycle defect; then ship and verify a state-preserving patch
+through the same one-command bootstrap journey.
+
+### Activity log
+
+- The failed install rolled `current` back to `0.1.0` and removed the partial
+  `0.1.1` runtime; persistent state remained outside the version directory.
+- Unified launchd logs identified the real failure hidden behind exit code 5:
+  the replacement broker bootstrap returned `37: Operation already in
+  progress` one millisecond before launchd finished removing the old broker.
+- Added a red regression test proving that `restartServices()` bootstrapped
+  replacements without observing job removal. The test now passes after
+  bounded `launchctl print` polling was added for both services.
+- `bootout` now ignores only launchd's explicit service-missing result; other
+  failures propagate instead of being mistaken for first-install state.
+- Advanced the corrected artifact to `0.1.2` rather than reusing the immutable
+  `0.1.1` identity.
+- Full exact-Node release verification passed with 144/144 tests, 96.10% line
+  coverage, 92.82% function coverage, 80.67% branch coverage, synthetic CLI
+  journeys, bootstrap and installed-package smoke, publication/secret scans,
+  zero high-severity dependency findings, and 15/15 Playwright runtime tests.
+
 ## 2026-08-21 — Release 0.1.1 and hardened runtime activation
 
-**Status:** In progress
+**Status:** Superseded by the `0.1.2` launchd race fix above
 
 **Scope:** Prepare the completed unified CLI journeys for release `0.1.1`,
 limit automatic CI to pushes on `main`, verify the feature branch, merge it

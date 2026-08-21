@@ -9,6 +9,8 @@ import { parseFileVaultStatus } from './filevault.js';
 import type { BootstrapManagementRequest, ManagementSystem, ServiceAccounts } from './management.js';
 
 const executeFile = promisify(execFile);
+const LAUNCHD_REMOVAL_TIMEOUT_MS = 5_000;
+const LAUNCHD_REMOVAL_POLL_MS = 25;
 type CommandResult = { stdout: string; stderr: string };
 type CommandExecutor = (executable: string, args: readonly string[]) => Promise<CommandResult>;
 
@@ -112,9 +114,25 @@ export class MacOsManagementSystem implements ManagementSystem {
     for (const target of ['system/dev.inframux.worker', 'system/dev.inframux.broker']) {
       try {
         await this.#execute('/bin/launchctl', ['bootout', target]);
-      } catch {
-        // A first installation has no loaded unit; bootout is intentionally idempotent.
+      } catch (error) {
+        if (isLaunchdServiceMissing(error)) continue;
+        throw error;
       }
+      await this.#waitForServiceRemoval(target);
+    }
+  }
+
+  async #waitForServiceRemoval(target: string): Promise<void> {
+    const deadline = Date.now() + LAUNCHD_REMOVAL_TIMEOUT_MS;
+    while (true) {
+      try {
+        await this.#execute('/bin/launchctl', ['print', target]);
+      } catch (error) {
+        if (isLaunchdServiceMissing(error)) return;
+        throw error;
+      }
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for launchd service removal: ${target}`);
+      await new Promise((resolve) => setTimeout(resolve, LAUNCHD_REMOVAL_POLL_MS));
     }
   }
 
@@ -358,4 +376,10 @@ async function executeCommand(executable: string, args: readonly string[]): Prom
     maxBuffer: 4 * 1024 * 1024,
   });
   return { stdout: result.stdout, stderr: result.stderr };
+}
+
+function isLaunchdServiceMissing(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const details = error as Error & { code?: unknown; stderr?: unknown };
+  return details.code === 113 && typeof details.stderr === 'string' && /Could not find service/u.test(details.stderr);
 }
