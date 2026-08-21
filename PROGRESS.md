@@ -7,6 +7,51 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-21 — Hardened daemon health and transactional upgrade
+
+**Status:** Release-verified; one user-authorized live hardened activation remains
+
+**Scope:** Diagnose both hardened daemons exiting after the `0.1.3` activation
+despite a successful bootstrap result. Reproduce the upgrade from an existing
+runtime with stale Unix socket paths and populated persistent state; replace
+filesystem-only health checks with real process/protocol health; reject and
+roll back an unhealthy release; retain bounded redacted daemon diagnostics;
+return actionable broker recovery; and verify the repaired packaged upgrade
+end to end before another live privileged attempt.
+
+### Activity log
+
+- Captured the installed failure without reading credential contents: both
+  launchd jobs repeatedly exited with code 1, both socket inodes predated the
+  upgrade and accepted no connections, and persistent state remained outside
+  the sealed runtime.
+- Traced the crash to `listenUnixSocket` rejecting stale paths and the false
+  success to a probe that checked only inode type plus launchd registration.
+- Restart now waits for both jobs to disappear, validates both exact socket
+  paths before deleting either, refuses links/non-sockets/live listeners, and
+  then starts the replacement services.
+- Added a broker protocol health response containing the active sealed release
+  and actual worker attachment state. Hardened activation additionally requires
+  both launchd jobs to be running; crash-looping jobs, stale sockets, version
+  mismatches, and broker-only startup all fail the probe.
+- A failed upgrade restores `current`, restarts and probes the retained runtime,
+  and preserves the credential sentinel. Legacy protocol acceptance is limited
+  to explicit rollback/recovery and requires repeated stable launchd/RPC passes.
+- Broker and worker now atomically replace one private, bounded, structurally
+  redacted `last-error.json` and remove it after a healthy start. No stack or
+  credential payload is written. `BROKER_UNAVAILABLE` now directs the user to
+  `inframux bootstrap --apply`, whose candidate failure path rolls back.
+- Advanced the immutable release identity to `0.1.4`; updated launchd, synthetic
+  process, fresh-bootstrap, packaged-consumer, documentation, and publication
+  contracts. The exact Node 24.18.1 tarball is installed globally; no provider
+  credential was requested or replaced.
+- Fresh `npm run verify` passed with 158/158 unit/integration tests, 96.10% line,
+  92.82% function, and 80.67% branch coverage; compiled two-process E2E,
+  fresh-bootstrap and tarball/global-prefix consumer smokes; publication and
+  secret scans; zero dependency vulnerabilities; and 15/15 central Playwright
+  runtime tests. The remaining live step is separated because sudo requires the
+  user to enter the macOS password directly.
+
 ## 2026-08-21 — Complete launchctl absence semantics
 
 **Status:** Validated; awaiting live hardened bootstrap

@@ -1,12 +1,15 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, chown, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
+import { chmod, chown, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
+import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
 
 import { parseFileVaultStatus } from './filevault.js';
 import type { BootstrapManagementRequest, ManagementSystem, ServiceAccounts } from './management.js';
+import { connectClient } from '../ipc/client.js';
+import { InframuxError } from '../core/errors.js';
 
 const executeFile = promisify(execFile);
 const LAUNCHD_REMOVAL_TIMEOUT_MS = 5_000;
@@ -18,11 +21,21 @@ export class MacOsManagementSystem implements ManagementSystem {
   readonly #execute: CommandExecutor;
   readonly #launchDaemonRoot: string;
   readonly #launcherRoot: string;
+  readonly #serviceProbeTimeoutMs: number;
+  readonly #serviceProbePollMs: number;
 
-  constructor(options: { execute?: CommandExecutor; launchDaemonRoot?: string; launcherRoot?: string } = {}) {
+  constructor(options: {
+    execute?: CommandExecutor;
+    launchDaemonRoot?: string;
+    launcherRoot?: string;
+    serviceProbeTimeoutMs?: number;
+    serviceProbePollMs?: number;
+  } = {}) {
     this.#execute = options.execute ?? executeCommand;
     this.#launchDaemonRoot = options.launchDaemonRoot ?? '/Library/LaunchDaemons';
     this.#launcherRoot = options.launcherRoot ?? '/usr/local/bin';
+    this.#serviceProbeTimeoutMs = options.serviceProbeTimeoutMs ?? 20_000;
+    this.#serviceProbePollMs = options.serviceProbePollMs ?? 200;
   }
 
   async fileVaultStatus() {
@@ -88,24 +101,40 @@ export class MacOsManagementSystem implements ManagementSystem {
     }
   }
 
-  async restartServices(): Promise<void> {
+  async restartServices(targetRoot: string): Promise<void> {
     await this.stopServices();
+    await removeStoppedSocketPaths(targetRoot);
     await this.#execute('/bin/launchctl', ['bootstrap', 'system', path.join(this.#launchDaemonRoot, 'dev.inframux.broker.plist')]);
     await this.#execute('/bin/launchctl', ['bootstrap', 'system', path.join(this.#launchDaemonRoot, 'dev.inframux.worker.plist')]);
     await this.#execute('/bin/launchctl', ['kickstart', '-k', 'system/dev.inframux.broker']);
     await this.#execute('/bin/launchctl', ['kickstart', '-k', 'system/dev.inframux.worker']);
   }
 
-  async probeServices(targetRoot: string): Promise<boolean> {
-    const deadline = Date.now() + 20_000;
-    const sockets = [path.join(targetRoot, 'run/client.sock'), path.join(targetRoot, 'run/worker.sock')];
+  async probeServices(targetRoot: string, options: { readonly allowLegacyHealth?: boolean } = {}): Promise<boolean> {
+    const deadline = Date.now() + this.#serviceProbeTimeoutMs;
+    const expectedVersion = await activeVersion(targetRoot);
+    const clientSocket = path.join(targetRoot, 'run/client.sock');
+    let consecutiveLegacyPasses = 0;
     while (Date.now() < deadline) {
-      if ((await Promise.all(sockets.map(isSocket))).every(Boolean)) {
-        await this.#execute('/bin/launchctl', ['print', 'system/dev.inframux.broker']);
-        await this.#execute('/bin/launchctl', ['print', 'system/dev.inframux.worker']);
-        return true;
+      try {
+        const broker = await this.#execute('/bin/launchctl', ['print', 'system/dev.inframux.broker']);
+        const worker = await this.#execute('/bin/launchctl', ['print', 'system/dev.inframux.worker']);
+        if (isRunningLaunchdJob(broker.stdout) && isRunningLaunchdJob(worker.stdout)) {
+          const protocol = await probeBrokerProtocol(clientSocket, expectedVersion);
+          if (protocol === 'healthy') return true;
+          if (options.allowLegacyHealth === true && protocol === 'legacy') {
+            consecutiveLegacyPasses += 1;
+            if (consecutiveLegacyPasses >= 2) return true;
+          } else {
+            consecutiveLegacyPasses = 0;
+          }
+        } else {
+          consecutiveLegacyPasses = 0;
+        }
+      } catch {
+        // A launchd job can be registered while crash-looping. Retry until the bounded deadline.
       }
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, this.#serviceProbePollMs));
     }
     return false;
   }
@@ -242,6 +271,100 @@ export class MacOsManagementSystem implements ManagementSystem {
   }
 }
 
+async function removeStoppedSocketPaths(targetRoot: string): Promise<void> {
+  if (!path.isAbsolute(targetRoot) || targetRoot === path.parse(targetRoot).root || /\0|[\r\n]/u.test(targetRoot)) {
+    throw new Error('Service restart target root is unsafe');
+  }
+  const runRoot = path.join(targetRoot, 'run');
+  try {
+    const runStat = await lstat(runRoot);
+    const targetStat = await lstat(targetRoot);
+    const expectedRunReal = path.join(await realpath(targetRoot), 'run');
+    if (!targetStat.isDirectory() || targetStat.isSymbolicLink() ||
+        !runStat.isDirectory() || runStat.isSymbolicLink() || await realpath(runRoot) !== expectedRunReal) {
+      throw new Error('Service run root is not a canonical directory');
+    }
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+    throw error;
+  }
+  const removable: string[] = [];
+  for (const name of ['client.sock', 'worker.sock']) {
+    const socketPath = path.join(runRoot, name);
+    try {
+      const stat = await lstat(socketPath);
+      if (!stat.isSocket() || stat.isSymbolicLink() || stat.nlink !== 1) {
+        throw new Error(`Refusing to remove non-socket collision: ${socketPath}`);
+      }
+      if (await socketAcceptsConnections(socketPath)) {
+        throw new Error(`Refusing to remove a Unix socket that still accepts connections: ${socketPath}`);
+      }
+      removable.push(socketPath);
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+  }
+  for (const socketPath of removable) await rm(socketPath);
+}
+
+async function activeVersion(targetRoot: string): Promise<string> {
+  const current = path.join(targetRoot, 'current');
+  const stat = await lstat(current);
+  if (!stat.isSymbolicLink()) throw new Error('Installed current pointer is not a symbolic link');
+  const version = path.basename(await readlink(current));
+  if (!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/iu.test(version)) throw new Error('Installed current version is invalid');
+  return version;
+}
+
+async function probeBrokerProtocol(socketPath: string, expectedVersion: string): Promise<'healthy' | 'legacy' | 'unhealthy'> {
+  let client;
+  try {
+    client = await connectClient(socketPath);
+    const result = await client.call('system.health', {}, { timeoutMs: 1_000 }) as {
+      schema?: unknown;
+      releaseVersion?: unknown;
+      brokerReady?: unknown;
+      workerReady?: unknown;
+    };
+    return result.schema === 1 && result.releaseVersion === expectedVersion &&
+      result.brokerReady === true && result.workerReady === true ? 'healthy' : 'unhealthy';
+  } catch (error) {
+    if (error instanceof InframuxError && error.code === 'INVALID_REQUEST' &&
+        error.message === 'Unknown operation: system.health') return 'legacy';
+    return 'unhealthy';
+  } finally {
+    client?.close();
+  }
+}
+
+async function socketAcceptsConnections(socketPath: string): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const socket = createConnection({ path: socketPath });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`Timed out checking stopped Unix socket: ${socketPath}`));
+    }, 500);
+    const finish = (result: boolean) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED' || error.code === 'ENOENT') finish(false);
+      else {
+        clearTimeout(timer);
+        socket.destroy();
+        reject(error);
+      }
+    });
+  });
+}
+
+function isRunningLaunchdJob(output: string): boolean {
+  return /^\s*state = running\s*$/mu.test(output) && /^\s*pid = [1-9]\d*\s*$/mu.test(output);
+}
+
 export function selectServiceIds(usedInput: readonly number[]): ServiceAccounts {
   const used = new Set(usedInput);
   const available: number[] = [];
@@ -355,15 +478,6 @@ async function removeExpectedFile(filename: string, marker: string): Promise<voi
     await rm(filename);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
-    throw error;
-  }
-}
-
-async function isSocket(filename: string): Promise<boolean> {
-  try {
-    return (await lstat(filename)).isSocket();
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
     throw error;
   }
 }

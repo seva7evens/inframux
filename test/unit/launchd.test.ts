@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,6 +8,7 @@ import test from 'node:test';
 import { parseFileVaultStatus } from '../../src/install/filevault.js';
 import { renderLaunchdPlists } from '../../src/install/launchd.js';
 import { MacOsManagementSystem, selectServiceIds } from '../../src/install/macos-system.js';
+import { listenUnixSocket } from '../../src/ipc/server.js';
 
 test('renders explicit least-privilege broker and worker launch daemons without shell or package managers', () => {
   const rendered = renderLaunchdPlists({
@@ -27,6 +29,8 @@ test('renders explicit least-privilege broker and worker launch daemons without 
     assert.match(plist, /<key>EnvironmentVariables<\/key>/);
     assert.match(plist, /INFRAMUX_(?:CLIENT|WORKER)_SOCKET/);
     assert.match(plist, /INFRAMUX_SECURITY_MODE/);
+    assert.match(plist, /INFRAMUX_DIAGNOSTIC_ROOT/);
+    assert.match(plist, /INFRAMUX_(?:RUNTIME_MANIFEST|EXECUTABLE_MANIFEST)/);
     assert.equal(/npm|npx|\/bin\/(?:ba|z)?sh|Documents\/GitHub/i.test(plist), false);
   }
   assert.match(rendered.broker, /<string>_inframux<\/string>/);
@@ -110,7 +114,7 @@ test('waits for launchd jobs to disappear before bootstrapping replacements', as
     return { stdout: '', stderr: '' };
   } });
 
-  await system.restartServices();
+  await system.restartServices('/tmp/inframux-launchd-test');
 
   for (const target of ['system/dev.inframux.worker', 'system/dev.inframux.broker']) {
     const lastPrint = calls.lastIndexOf(`/bin/launchctl print ${target}`);
@@ -135,7 +139,7 @@ test('treats launchctl bootout code 3 as an already-absent service', async () =>
     return { stdout: '', stderr: '' };
   } });
 
-  await system.restartServices();
+  await system.restartServices('/tmp/inframux-launchd-test');
 
   assert.equal(calls.filter((call) => call.startsWith('/bin/launchctl bootstrap system ')).length, 2);
   assert.equal(calls.some((call) => call.startsWith('/bin/launchctl print ')), false);
@@ -152,7 +156,7 @@ test('fails closed on an unexpected launchctl bootout error', async () => {
     });
   } });
 
-  await assert.rejects(system.restartServices(), /Input\/output error/);
+  await assert.rejects(system.restartServices('/tmp/inframux-launchd-test'), /Input\/output error/);
   assert.equal(calls.some((call) => call.startsWith('/bin/launchctl bootstrap ')), false);
 });
 
@@ -170,9 +174,149 @@ test('fails closed when launchctl cannot confirm service removal', async () => {
     return { stdout: '', stderr: '' };
   } });
 
-  await assert.rejects(system.restartServices(), /Operation not permitted/);
+  await assert.rejects(system.restartServices('/tmp/inframux-launchd-test'), /Operation not permitted/);
   assert.equal(calls.some((call) => call.startsWith('/bin/launchctl bootstrap ')), false);
 });
+
+test('removes only stopped stale Unix sockets before bootstrapping replacement daemons', async (t) => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-stale-sockets-'));
+  t.after(() => rm(targetRoot, { recursive: true, force: true }));
+  const runRoot = path.join(targetRoot, 'run');
+  await mkdir(runRoot);
+  for (const name of ['client.sock', 'worker.sock']) await createStaleSocket(path.join(runRoot, name));
+  const system = new MacOsManagementSystem({ execute: launchdAlreadyStopped });
+
+  await system.restartServices(targetRoot);
+
+  await assert.rejects(lstat(path.join(runRoot, 'client.sock')), { code: 'ENOENT' });
+  await assert.rejects(lstat(path.join(runRoot, 'worker.sock')), { code: 'ENOENT' });
+});
+
+test('fails closed instead of deleting a non-socket collision in the run directory', async (t) => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-unsafe-socket-'));
+  t.after(() => rm(targetRoot, { recursive: true, force: true }));
+  await mkdir(path.join(targetRoot, 'run'));
+  await writeFile(path.join(targetRoot, 'run/client.sock'), 'user-data');
+  const calls: string[] = [];
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    calls.push(`${executable} ${args.join(' ')}`);
+    return launchdAlreadyStopped(executable, args);
+  } });
+
+  await assert.rejects(system.restartServices(targetRoot), /Refusing to remove non-socket/);
+  assert.equal(calls.some((call) => call.includes('launchctl bootstrap')), false);
+});
+
+test('validates both socket paths before removing either one', async (t) => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-atomic-socket-check-'));
+  t.after(() => rm(targetRoot, { recursive: true, force: true }));
+  const runRoot = path.join(targetRoot, 'run');
+  await mkdir(runRoot);
+  const clientSocket = path.join(runRoot, 'client.sock');
+  await createStaleSocket(clientSocket);
+  await writeFile(path.join(runRoot, 'worker.sock'), 'foreign-data');
+  const system = new MacOsManagementSystem({ execute: launchdAlreadyStopped });
+
+  await assert.rejects(system.restartServices(targetRoot), /Refusing to remove non-socket/);
+  assert.equal((await lstat(clientSocket)).isSocket(), true);
+});
+
+test('refuses to unlink a Unix socket that still accepts connections', async (t) => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-live-socket-'));
+  t.after(() => rm(targetRoot, { recursive: true, force: true }));
+  const socketPath = path.join(targetRoot, 'run/client.sock');
+  const server = await listenUnixSocket({ socketPath, handlers: {} });
+  t.after(() => server.close());
+  const calls: string[] = [];
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    calls.push(`${executable} ${args.join(' ')}`);
+    return launchdAlreadyStopped(executable, args);
+  } });
+
+  await assert.rejects(system.restartServices(targetRoot), /still accepts connections/);
+  assert.equal((await lstat(socketPath)).isSocket(), true);
+  assert.equal(calls.some((call) => call.includes('launchctl bootstrap')), false);
+});
+
+test('does not accept stale socket inodes or a broker without an attached worker as healthy', async (t) => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-real-health-'));
+  t.after(() => rm(targetRoot, { recursive: true, force: true }));
+  await mkdir(path.join(targetRoot, 'runtime/versions/0.1.4'), { recursive: true });
+  await symlink('runtime/versions/0.1.4', path.join(targetRoot, 'current'));
+  const runRoot = path.join(targetRoot, 'run');
+  await mkdir(runRoot);
+  let workerReady = true;
+  let releaseVersion = '0.1.4';
+  let launchdOutput = 'state = spawn scheduled\n';
+  const clientServer = await listenUnixSocket({
+    socketPath: path.join(runRoot, 'client.sock'),
+    handlers: {
+      'system.health': async () => ({
+        schema: 1, releaseVersion, brokerReady: true, workerReady,
+      }),
+    },
+  });
+  const workerServer = await listenUnixSocket({ socketPath: path.join(runRoot, 'worker.sock'), handlers: {} });
+  t.after(() => Promise.all([clientServer.close(), workerServer.close()]));
+  const system = new MacOsManagementSystem({
+    execute: async () => ({ stdout: launchdOutput, stderr: '' }),
+    serviceProbeTimeoutMs: 25,
+    serviceProbePollMs: 1,
+  });
+
+  assert.equal(await system.probeServices(targetRoot), false);
+  launchdOutput = 'state = running\npid = 123\n';
+  workerReady = false;
+  assert.equal(await system.probeServices(targetRoot), false);
+  workerReady = true;
+  releaseVersion = '0.1.3';
+  assert.equal(await system.probeServices(targetRoot), false);
+  releaseVersion = '0.1.4';
+  assert.equal(await system.probeServices(targetRoot), true);
+});
+
+test('accepts legacy protocol readiness only for an explicit rollback probe', async (t) => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-legacy-health-'));
+  t.after(() => rm(targetRoot, { recursive: true, force: true }));
+  await mkdir(path.join(targetRoot, 'runtime/versions/0.1.0'), { recursive: true });
+  await symlink('runtime/versions/0.1.0', path.join(targetRoot, 'current'));
+  const runRoot = path.join(targetRoot, 'run');
+  const clientServer = await listenUnixSocket({ socketPath: path.join(runRoot, 'client.sock'), handlers: {} });
+  const workerServer = await listenUnixSocket({ socketPath: path.join(runRoot, 'worker.sock'), handlers: {} });
+  t.after(() => Promise.all([clientServer.close(), workerServer.close()]));
+  const system = new MacOsManagementSystem({
+    execute: async () => ({ stdout: 'state = running\npid = 123\n', stderr: '' }),
+    serviceProbeTimeoutMs: 25,
+    serviceProbePollMs: 1,
+  });
+
+  assert.equal(await system.probeServices(targetRoot), false);
+  assert.equal(await system.probeServices(targetRoot, { allowLegacyHealth: true }), true);
+});
+
+async function launchdAlreadyStopped(executable: string, args: readonly string[]) {
+  if (executable === '/bin/launchctl' && args[0] === 'bootout') {
+    throw Object.assign(new Error('Boot-out failed: 3: No such process'), {
+      code: 3, stdout: '', stderr: 'Boot-out failed: 3: No such process\n',
+    });
+  }
+  return { stdout: '', stderr: '' };
+}
+
+async function createStaleSocket(socketPath: string): Promise<void> {
+  const source = [
+    "const net = require('node:net');",
+    `net.createServer().listen(${JSON.stringify(socketPath)}, () => process.stdout.write('ready\\n'));`,
+  ].join('');
+  const child = spawn(process.execPath, ['-e', source], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.stdout!.once('data', () => resolve());
+  });
+  child.kill('SIGKILL');
+  await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  assert.equal((await lstat(socketPath)).isSocket(), true);
+}
 
 test('records only an ACL it owns, retries idempotently, and removes it on cleanup', async (t) => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-acl-receipt-'));

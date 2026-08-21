@@ -39,14 +39,16 @@ export async function startBrokerService(options: {
   broker: Broker;
   callerUid: number;
   sharedSockets?: boolean;
+  systemHealth?: RpcHandler;
 }): Promise<UnixRpcServer> {
-  const handlers = Object.fromEntries(PUBLIC_OPERATIONS.map((operation) => [
+  const handlers: Record<string, RpcHandler> = Object.fromEntries(PUBLIC_OPERATIONS.map((operation) => [
     operation,
     (async (payload, context) => options.broker.handle(operation, payload, {
       callerUid: options.callerUid,
       signal: context.signal,
     })) satisfies RpcHandler,
-  ])) as Record<string, RpcHandler>;
+  ]));
+  if (options.systemHealth !== undefined) handlers['system.health'] = options.systemHealth;
   return listenUnixSocket({
     socketPath: options.socketPath,
     handlers,
@@ -60,6 +62,7 @@ export async function startBrokerSystem(options: {
   broker: Broker;
   worker: RpcWorkerExecutor;
   callerUid: number;
+  releaseVersion: string;
   sharedSockets?: boolean;
 }): Promise<{ close(): Promise<void> }> {
   const workerServer = await listenUnixSocket({
@@ -81,6 +84,12 @@ export async function startBrokerSystem(options: {
       socketPath: options.clientSocketPath,
       broker: options.broker,
       callerUid: options.callerUid,
+      systemHealth: async () => Object.freeze({
+        schema: 1,
+        releaseVersion: options.releaseVersion,
+        brokerReady: true,
+        workerReady: options.worker.isAttached(),
+      }),
       ...(options.sharedSockets ? { sharedSockets: true } : {}),
     });
   } catch (error) {

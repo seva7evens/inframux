@@ -125,6 +125,20 @@ test('renders concise safe status and versioned machine errors with stable exit 
   assert.equal(rendered.text.includes('stack'), false);
 });
 
+test('renders an actionable hardened repair when the broker is unavailable', () => {
+  const rendered = renderError(new InframuxError(
+    'BROKER_UNAVAILABLE',
+    'Cannot connect to inframux broker at /Library/Application Support/inframux/run/client.sock',
+  ), true);
+
+  assert.deepEqual(JSON.parse(rendered.text).nextActions, [{
+    type: 'recover', actor: 'user', command: 'inframux bootstrap --apply',
+    description: 'Repair the hardened services from the installed release; an unhealthy release is rolled back automatically.',
+    interactive: true, privileged: true,
+  }]);
+  assert.match(renderError(new InframuxError('BROKER_UNAVAILABLE', 'Cannot connect'), false).text, /inframux bootstrap --apply/);
+});
+
 test('resolves nested help before validating required session identifiers', () => {
   assert.deepEqual(parseCli(['onboard', 'authorize', '--help']), {
     command: 'help', json: false, verbose: false,

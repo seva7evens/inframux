@@ -31,6 +31,8 @@ export function renderLaunchdPlists(input: LaunchdInputs): { readonly broker: st
       INFRAMUX_WORKER_SOCKET: path.join(input.installRoot, 'run/worker.sock'),
       INFRAMUX_CALLER_UID: String(input.callerUid),
       INFRAMUX_CLIENT_USERNAME: input.clientUsername,
+      INFRAMUX_RUNTIME_MANIFEST: path.join(input.installRoot, 'current/package.json'),
+      INFRAMUX_DIAGNOSTIC_ROOT: path.join(input.installRoot, 'logs/broker'),
     }),
     worker: plist('worker', input.workerUser, input.group, input.nodeExecutable, input.workerEntry, input.installRoot, {
       INFRAMUX_SECURITY_MODE: 'hardened',
@@ -38,6 +40,7 @@ export function renderLaunchdPlists(input: LaunchdInputs): { readonly broker: st
       INFRAMUX_WORKER_ROOT: path.join(input.installRoot, 'worker'),
       INFRAMUX_TOOL_ROOT: path.join(input.installRoot, 'current/tools'),
       INFRAMUX_EXECUTABLE_MANIFEST: input.executableManifest,
+      INFRAMUX_DIAGNOSTIC_ROOT: path.join(input.installRoot, 'logs/worker'),
     }),
   });
 }

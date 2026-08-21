@@ -6,6 +6,9 @@ import test from 'node:test';
 
 import { connectClient } from '../../src/ipc/client.js';
 import { listenUnixSocket } from '../../src/ipc/server.js';
+import { startBrokerSystem } from '../../src/broker/service.js';
+import { RpcWorkerExecutor } from '../../src/broker/worker-executor.js';
+import type { Broker } from '../../src/broker/broker.js';
 
 test('serves concurrent request IDs over a private Unix socket', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-ipc-'));
@@ -61,4 +64,28 @@ test('propagates cancellation and deadlines and releases pending requests on dis
   const disconnected = client.call('wait', {}, { timeoutMs: 5_000 });
   client.close();
   await assert.rejects(() => disconnected, /closed|disconnect/i);
+});
+
+test('reports broker protocol readiness only after the execution worker is attached', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-health-rpc-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const clientSocketPath = path.join(root, 'client.sock');
+  const workerSocketPath = path.join(root, 'worker.sock');
+  const worker = new RpcWorkerExecutor();
+  const system = await startBrokerSystem({
+    clientSocketPath, workerSocketPath, worker, callerUid: process.getuid!(), releaseVersion: '0.1.4',
+    broker: { handle: async () => ({ schema: 1 }) } as unknown as Broker,
+  });
+  t.after(() => system.close());
+  const client = await connectClient(clientSocketPath);
+  t.after(() => client.close());
+
+  assert.deepEqual(await client.call('system.health', {}, { timeoutMs: 1_000 }), {
+    schema: 1, releaseVersion: '0.1.4', brokerReady: true, workerReady: false,
+  });
+  const workerPeer = await connectClient(workerSocketPath);
+  t.after(() => workerPeer.close());
+  assert.deepEqual(await client.call('system.health', {}, { timeoutMs: 1_000 }), {
+    schema: 1, releaseVersion: '0.1.4', brokerReady: true, workerReady: true,
+  });
 });

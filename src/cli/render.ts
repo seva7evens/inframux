@@ -13,23 +13,30 @@ export function renderResult(command: string, result: unknown, options: { json: 
 export function renderError(error: unknown, json: boolean): { text: string; exitCode: number } {
   const normalized = error instanceof InframuxError ? error : asInframuxError(error instanceof Error ? error : new Error('Unknown error'));
   const journey = journeyFromError(normalized);
-  const fallbackAction = {
-    type: 'recover', actor: 'agent' as const,
-    command: normalized.recovery ?? 'inframux --help',
-    description: `Recover from ${normalized.code}.`, interactive: false, privileged: false,
-  };
+  const recovery = normalized.recovery ?? (normalized.code === 'BROKER_UNAVAILABLE' ? 'inframux bootstrap --apply' : undefined);
+  const fallbackAction = normalized.code === 'BROKER_UNAVAILABLE'
+    ? {
+        type: 'recover', actor: 'user' as const, command: recovery!,
+        description: 'Repair the hardened services from the installed release; an unhealthy release is rolled back automatically.',
+        interactive: true, privileged: true,
+      }
+    : {
+        type: 'recover', actor: 'agent' as const,
+        command: recovery ?? 'inframux --help',
+        description: `Recover from ${normalized.code}.`, interactive: false, privileged: false,
+      };
   const body = {
     schema: 1,
     error: {
       code: normalized.code,
       message: normalized.message,
-      ...(normalized.recovery === undefined ? {} : { recovery: normalized.recovery }),
+      ...(recovery === undefined ? {} : { recovery }),
     },
     ...(journey ?? { state: 'failed', complete: false, nextActions: [fallbackAction] }),
   };
   const text = json
     ? JSON.stringify(body, null, 2)
-    : `${normalized.code}: ${normalized.message}${normalized.recovery === undefined ? '' : `\nRecovery: ${normalized.recovery}`}`;
+    : `${normalized.code}: ${normalized.message}${recovery === undefined ? '' : `\nRecovery: ${recovery}`}`;
   return { text, exitCode: exitCodeFor(normalized.code) };
 }
 

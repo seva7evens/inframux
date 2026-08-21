@@ -79,8 +79,8 @@ export interface ManagementSystem {
   prepareDataRoots(targetRoot: string, accounts: ServiceAccounts, caller: BootstrapManagementRequest['caller']): Promise<void>;
   installUserLaunchers(targetRoot: string): Promise<void>;
   installLaunchDaemons(plists: { readonly broker: string; readonly worker: string }): Promise<void>;
-  restartServices(): Promise<void>;
-  probeServices(targetRoot: string): Promise<boolean>;
+  restartServices(targetRoot: string): Promise<void>;
+  probeServices(targetRoot: string, options?: { readonly allowLegacyHealth?: boolean }): Promise<boolean>;
   stopServices(): Promise<void>;
   removeInstallation(targetRoot: string): Promise<void>;
   grantCheckoutAccess(targetRoot: string, ancestors: readonly string[], sessionId: string): Promise<void>;
@@ -155,6 +155,7 @@ export async function applyHardenedBootstrap(
   validateRequest(request);
   assertFileVaultReady(await system.fileVaultStatus());
   const accounts = await system.ensureServiceAccounts(request.caller);
+  const previousVersion = await currentVersionOrNull(request.targetRoot);
   let servicesTouched = false;
   try {
     await applyToRoot({
@@ -179,12 +180,23 @@ export async function applyHardenedBootstrap(
         });
         await system.installLaunchDaemons(plists);
         servicesTouched = true;
-        await system.restartServices();
+        await system.restartServices(request.targetRoot);
         return system.probeServices(request.targetRoot);
       },
     });
   } catch (error) {
-    if (servicesTouched) await system.stopServices().catch(() => undefined);
+    if (servicesTouched) {
+      if (previousVersion === null) {
+        await system.stopServices().catch(() => undefined);
+      } else {
+        try {
+          await system.restartServices(request.targetRoot);
+          if (!await system.probeServices(request.targetRoot, { allowLegacyHealth: true })) throw new Error('Restored runtime failed health probe');
+        } catch (recoveryError) {
+          throw new AggregateError([error, recoveryError], 'Upgrade failed and the retained runtime could not be restored');
+        }
+      }
+    }
     throw error;
   }
   return Object.freeze({
@@ -206,14 +218,31 @@ export async function applyHardenedRollback(
   if (from === request.version) throw new Error('Requested rollback version is already active');
   await activateVersion(request.targetRoot, request.version);
   try {
-    await system.restartServices();
-    if (!await system.probeServices(request.targetRoot)) throw new Error('Rolled-back services failed probe');
+    await system.restartServices(request.targetRoot);
+    if (!await system.probeServices(request.targetRoot, { allowLegacyHealth: true })) throw new Error('Rolled-back services failed probe');
   } catch (error) {
     await activateVersion(request.targetRoot, from);
-    await system.restartServices().catch(() => undefined);
+    try {
+      await system.restartServices(request.targetRoot);
+      if (!await system.probeServices(request.targetRoot, { allowLegacyHealth: true })) throw new Error('Original runtime failed health probe after rollback recovery');
+    } catch (recoveryError) {
+      throw new AggregateError([error, recoveryError], 'Rollback failed and the original runtime could not be restored');
+    }
     throw error;
   }
   return Object.freeze({ schema: 1, rolledBack: true, from, to: request.version });
+}
+
+async function currentVersionOrNull(targetRoot: string): Promise<string | null> {
+  try {
+    const current = path.join(targetRoot, 'current');
+    const stat = await lstat(current);
+    if (!stat.isSymbolicLink()) throw new Error('Installed current pointer is not a symbolic link');
+    return path.basename(await readlink(current));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 export async function applyHardenedUninstall(

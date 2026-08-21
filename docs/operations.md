@@ -50,7 +50,17 @@ missing or changed. Do not copy a manifest or weaken the remote check; submit a
 new local approval through the management path.
 
 `BROKER_UNAVAILABLE` means the socket/service must be repaired. Never fall back
-silently to ambient CLI credentials or user mode.
+silently to ambient CLI credentials or user mode. The CLI returns this recovery
+action instead of generic help:
+
+```bash
+inframux bootstrap --apply
+```
+
+That command repairs from the already installed package and preserves
+`state/`. It does not request provider credentials. If the candidate broker and
+worker do not become healthy, bootstrap reactivates and restarts the retained
+runtime automatically.
 
 ## Lifecycle
 
@@ -80,7 +90,7 @@ runtime rather than relying on ambient shell command resolution:
 
 ```bash
 source "$HOME/.nvm/nvm.sh"
-nvm exec 24.18.1 npm install --global inframux@0.1.3
+nvm exec 24.18.1 npm install --global inframux@0.1.4
 nvm exec 24.18.1 inframux bootstrap --apply
 ```
 
@@ -117,6 +127,18 @@ checkout, copied repository, or different remote requires a new approval.
 Rollback atomically activates a previously verified version. Software rollback
 does not roll back or duplicate credentials. Only current and one previous
 runtime version are retained.
+
+Hardened restart waits for both old launchd jobs to disappear and then removes
+only the exact stopped `run/client.sock` and `run/worker.sock` socket inodes. It
+refuses symlinks, regular files, hard links, non-canonical run roots, and sockets
+that still accept connections. A release is accepted only when both launchd
+jobs are running and the broker health RPC reports the exact active release plus
+an attached worker. Socket-file existence alone is never considered health.
+
+Each service retains at most one private `last-error.json` under
+`logs/broker/` or `logs/worker/`. The record contains a timestamp, service name,
+and bounded redacted message; a healthy start removes it. Diagnostic files are
+outside sealed versions and never contain credential payloads or stack traces.
 
 ## Browser recovery
 

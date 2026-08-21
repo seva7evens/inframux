@@ -11,7 +11,7 @@ const serviceSchema = z.object({
 const listSchema = z.object({ object: z.literal('list'), data: z.array(z.record(z.string(), z.json())) }).passthrough();
 
 export function resendAdapter(transport: HttpTransport, origin: string): ProviderAdapter {
-  const headers = (secret: Buffer) => ({ ...bearer(secret), 'user-agent': 'inframux/0.1.3' });
+  const headers = (secret: Buffer) => ({ ...bearer(secret), 'user-agent': 'inframux/0.1.4' });
   return {
     id: 'resend',
     async verify(context) {
@@ -28,6 +28,6 @@ export function resendAdapter(transport: HttpTransport, origin: string): Provide
       }
       return { identity: Object.freeze({ accountScope: service.accountScope }), resources: { domains: domains.data } };
     },
-    call: (context) => genericApiCall({ context, transport, origin, headers: { 'user-agent': 'inframux/0.1.3' } }),
+    call: (context) => genericApiCall({ context, transport, origin, headers: { 'user-agent': 'inframux/0.1.4' } }),
   };
 }

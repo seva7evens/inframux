@@ -132,10 +132,53 @@ class FakeManagementSystem implements ManagementSystem {
   async prepareDataRoots() { this.events.push('prepare'); }
   async installUserLaunchers() { this.events.push('launchers'); }
   async installLaunchDaemons(plists: { broker: string; worker: string }) { this.events.push('plists'); this.plists = plists; }
-  async restartServices() { this.events.push('restart'); }
-  async probeServices() { this.events.push('probe'); return true; }
+  readonly probeResults: boolean[] = [];
+  async restartServices(_targetRoot: string) { this.events.push('restart'); }
+  async probeServices(_targetRoot?: string, _options?: { allowLegacyHealth?: boolean }) {
+    this.events.push('probe'); return this.probeResults.shift() ?? true;
+  }
   async stopServices() { this.events.push('stop'); }
   async removeInstallation() { this.events.push('remove'); }
   async grantCheckoutAccess(_targetRoot: string, ancestors: readonly string[], _sessionId: string) { this.checkoutAncestors.push(...ancestors); }
   async revokeOwnedCheckoutAccess() { this.events.push('revoke-checkout-access'); }
 }
+
+test('failed upgrade restores and re-probes the retained runtime without deleting state', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'inframux-upgrade-rollback-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, 'installed');
+  const uid = process.getuid!();
+  const gid = process.getgid!();
+  const caller = { uid, gid, username: os.userInfo().username };
+  const system = new FakeManagementSystem(uid, gid);
+
+  const firstStage = path.join(root, 'stage-0.1.0');
+  const firstManifest = await stageLocalRelease({
+    sourceRoot: path.resolve(import.meta.dirname, '../..'), stagingRoot: firstStage, targetRoot: target,
+    version: '0.1.0', installUid: uid, installGid: gid,
+  });
+  await applyHardenedBootstrap({
+    schema: 1, operation: 'bootstrap', stagedRoot: firstStage, targetRoot: target, manifest: firstManifest, caller,
+  }, system);
+  await mkdir(path.join(target, 'state/credentials'), { recursive: true });
+  const credentialSentinel = path.join(target, 'state/credentials/preserved');
+  await (await import('node:fs/promises')).writeFile(credentialSentinel, 'do-not-delete');
+
+  system.events.length = 0;
+  system.probeResults.push(false, true);
+  const upgradeStage = path.join(root, 'stage-0.1.4');
+  const upgradeManifest = await stageLocalRelease({
+    sourceRoot: path.resolve(import.meta.dirname, '../..'), stagingRoot: upgradeStage, targetRoot: target,
+    version: '0.1.4', installUid: uid, installGid: gid,
+  });
+  await assert.rejects(applyHardenedBootstrap({
+    schema: 1, operation: 'bootstrap', stagedRoot: upgradeStage, targetRoot: target, manifest: upgradeManifest, caller,
+  }, system), /health\/isolation probe/);
+
+  assert.equal(path.basename(await readlink(path.join(target, 'current'))), '0.1.0');
+  assert.equal(await (await import('node:fs/promises')).readFile(credentialSentinel, 'utf8'), 'do-not-delete');
+  assert.deepEqual(system.events, [
+    'filevault', 'accounts', 'prepare', 'launchers', 'plists',
+    'restart', 'probe', 'restart', 'probe',
+  ]);
+});

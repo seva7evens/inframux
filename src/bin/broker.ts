@@ -10,6 +10,7 @@ import { startBrokerSystem } from '../broker/service.js';
 import { RpcWorkerExecutor } from '../broker/worker-executor.js';
 import { assertSafeRegularFile } from '../core/safe-files.js';
 import { assertRuntimeVersion } from '../core/version.js';
+import { clearDaemonDiagnostic, writeDaemonDiagnostic } from '../install/daemon-diagnostic.js';
 import { createProviderAdapterRegistry } from '../providers/adapters/index.js';
 import { googleApiOrigins } from '../providers/adapters/google.js';
 import { FetchHttpTransport } from '../providers/http-transport.js';
@@ -51,6 +52,7 @@ export async function brokerMain(environment: NodeJS.ProcessEnv = process.env): 
     broker,
     worker,
     callerUid: Number.parseInt(required(environment, 'INFRAMUX_CALLER_UID'), 10),
+    releaseVersion: await readReleaseVersion(required(environment, 'INFRAMUX_RUNTIME_MANIFEST')),
     sharedSockets: required(environment, 'INFRAMUX_SECURITY_MODE') === 'hardened',
   });
   if (required(environment, 'INFRAMUX_SECURITY_MODE') === 'hardened') {
@@ -62,6 +64,18 @@ export async function brokerMain(environment: NodeJS.ProcessEnv = process.env): 
       maxBuffer: 64 * 1024,
     });
   }
+  if (environment.INFRAMUX_DIAGNOSTIC_ROOT !== undefined) {
+    await clearDaemonDiagnostic(environment.INFRAMUX_DIAGNOSTIC_ROOT);
+  }
+}
+
+async function readReleaseVersion(filename: string): Promise<string> {
+  await assertSafeRegularFile(filename, { mode: 0o644 });
+  const manifest = JSON.parse(await readFile(filename, 'utf8')) as { version?: unknown };
+  if (typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/iu.test(manifest.version)) {
+    throw new Error('Runtime package manifest has an invalid version');
+  }
+  return manifest.version;
 }
 
 function productionProviderOrigins(): readonly string[] {
@@ -94,8 +108,10 @@ function required(environment: NodeJS.ProcessEnv, name: string): string {
 }
 
 if (process.argv[1] !== undefined && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
-  brokerMain().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : 'Broker failed'}\n`);
+  brokerMain().catch(async (error: unknown) => {
+    const diagnosticRoot = process.env.INFRAMUX_DIAGNOSTIC_ROOT;
+    if (diagnosticRoot !== undefined) await writeDaemonDiagnostic(diagnosticRoot, 'broker', error).catch(() => undefined);
+    process.stderr.write('Broker failed to start; run inframux bootstrap --apply to repair or automatically roll back.\n');
     process.exitCode = 1;
   });
 }

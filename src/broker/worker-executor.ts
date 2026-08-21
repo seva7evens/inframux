@@ -39,6 +39,10 @@ export class LocalWorkerExecutor implements WorkerExecutor {
 export class RpcWorkerExecutor implements WorkerExecutor {
   #peer: RpcPeer | undefined;
 
+  isAttached(): boolean {
+    return this.#peer !== undefined;
+  }
+
   attach(peer: RpcPeer): void {
     if (this.#peer !== undefined) throw new Error('A worker is already attached');
     this.#peer = peer;

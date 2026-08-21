@@ -101,6 +101,7 @@ fs.writeFileSync(path.join(output, 'browser-ran.json'), JSON.stringify({ cwd: pr
     INFRAMUX_WORKER_ROOT: workerRoot,
     INFRAMUX_TOOL_ROOT: toolRoot,
     INFRAMUX_EXECUTABLE_MANIFEST: executableManifest,
+    INFRAMUX_RUNTIME_MANIFEST: path.resolve(import.meta.dirname, '../../package.json'),
     INFRAMUX_FINGERPRINT_KEY: fingerprintKey,
     INFRAMUX_AUDIT_KEY: auditKey,
     INFRAMUX_SECURITY_MODE: 'user',

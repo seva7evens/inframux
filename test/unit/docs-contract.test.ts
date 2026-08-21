@@ -27,7 +27,7 @@ test('documents the implemented safe CLI and labels live-provider work honestly'
 
 test('pins package installation and bootstrap execution to the required NVM runtime', async () => {
   const readme = await readFile(path.join(root, 'README.md'), 'utf8');
-  assert.match(readme, /nvm exec 24\.18\.1 npm install --global inframux@0\.1\.3/);
+  assert.match(readme, /nvm exec 24\.18\.1 npm install --global inframux@0\.1\.4/);
   assert.match(readme, /nvm exec 24\.18\.1 inframux bootstrap --apply/);
   assert.doesNotMatch(readme, /^npm install --global inframux@0\.1\.0$/m);
 });

@@ -8,6 +8,7 @@ import { loadExecutableManifest } from '../worker/executable-manifest.js';
 import { WorkerRunner } from '../worker/runner.js';
 import { McpProcessManager } from '../worker/mcp-process.js';
 import { startWorkerService } from '../worker/service.js';
+import { clearDaemonDiagnostic, writeDaemonDiagnostic } from '../install/daemon-diagnostic.js';
 
 export async function workerMain(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
   assertRuntimeVersion();
@@ -28,6 +29,9 @@ export async function workerMain(environment: NodeJS.ProcessEnv = process.env): 
     }),
     mcp: new McpProcessManager({ workerRoot, toolRoot, manifest, allowedOwnerUids, redactor }),
   });
+  if (environment.INFRAMUX_DIAGNOSTIC_ROOT !== undefined) {
+    await clearDaemonDiagnostic(environment.INFRAMUX_DIAGNOSTIC_ROOT);
+  }
 }
 
 function required(environment: NodeJS.ProcessEnv, name: string): string {
@@ -37,8 +41,10 @@ function required(environment: NodeJS.ProcessEnv, name: string): string {
 }
 
 if (process.argv[1] !== undefined && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
-  workerMain().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : 'Worker failed'}\n`);
+  workerMain().catch(async (error: unknown) => {
+    const diagnosticRoot = process.env.INFRAMUX_DIAGNOSTIC_ROOT;
+    if (diagnosticRoot !== undefined) await writeDaemonDiagnostic(diagnosticRoot, 'worker', error).catch(() => undefined);
+    process.stderr.write('Worker failed to start; run inframux bootstrap --apply to repair or automatically roll back.\n');
     process.exitCode = 1;
   });
 }

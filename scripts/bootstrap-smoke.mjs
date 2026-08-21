@@ -24,11 +24,11 @@ try {
     'bootstrap', '--user-mode', '--apply', '--json',
   ], repositoryRoot, environment, 6 * 60_000));
   assert.equal(bootstrap.mode, 'user');
-  assert.equal(bootstrap.version, '0.1.3');
+  assert.equal(bootstrap.version, '0.1.4');
 
   const installedCli = path.join(installRoot, 'current/bin/inframux');
   const update = parseJson(await run(installedCli, ['update', '--check', '--json'], temporaryRoot, environment));
-  assert.equal(update.currentVersion, '0.1.3');
+  assert.equal(update.currentVersion, '0.1.4');
   assert.equal(update.updateAvailable, false);
 
   const installedNode = path.join(installRoot, 'current/bin/node');
@@ -45,6 +45,7 @@ try {
     INFRAMUX_WORKER_ROOT: path.join(installRoot, 'worker'),
     INFRAMUX_TOOL_ROOT: path.join(installRoot, 'current/tools'),
     INFRAMUX_EXECUTABLE_MANIFEST: path.join(installRoot, 'current/executable-manifest.json'),
+    INFRAMUX_RUNTIME_MANIFEST: path.join(installRoot, 'current/package.json'),
   });
   const broker = spawnService(installedNode, path.join(installRoot, 'current/dist/src/bin/broker.js'), temporaryRoot, serviceEnvironment);
   let worker;

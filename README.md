@@ -13,7 +13,8 @@ executable in the credential boundary.
 ## Status
 
 The production core is implemented on exact Node.js `24.18.1`: sealed macOS
-bootstrap, separate launchd broker/worker identities, repository trust,
+bootstrap with transactional health-checked upgrades, separate launchd
+broker/worker identities, repository trust,
 broker-owned credentials, HMAC audit, bounded Unix RPC, fixed-origin provider
 adapters, Desktop Google OAuth, central Playwright, a unified human/machine CLI
 journey, and separate-process
@@ -32,7 +33,7 @@ repository yet. After the reviewed version is available on npm, installation is:
 
 ```bash
 source "$HOME/.nvm/nvm.sh"
-nvm exec 24.18.1 npm install --global inframux@0.1.3
+nvm exec 24.18.1 npm install --global inframux@0.1.4
 nvm exec 24.18.1 inframux bootstrap --apply
 ```
 
