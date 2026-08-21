@@ -7,6 +7,34 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-21 — Complete launchctl absence semantics
+
+**Status:** Validated; awaiting live hardened bootstrap
+
+**Scope:** Correct the incomplete `0.1.2` launchd race fix after live bootstrap
+showed that `launchctl bootout` reports an already-absent job as exit code 3
+while `launchctl print` reports the same state as exit code 113. Build an
+explicit operation-specific result matrix, test stopped/fresh/delayed/error
+journeys, preserve all persistent state, and do not request another privileged
+run until the complete local and packaged upgrade path is verified.
+
+### Activity log
+
+- Live evidence confirmed that both services and the partial `0.1.2` runtime
+  were absent, while `current` and all persistent roots remained on `0.1.0`.
+- Reproduced the exact stopped-service failure in a red test using launchctl's
+  real `bootout` result: exit code 3 with `No such process`.
+- Replaced the shared absence check with operation-specific, fail-closed
+  contracts: exact code/message 3 for `bootout`, exact code/message 113 for
+  `print`; unrelated failures are never swallowed.
+- Added tests for already-stopped services, delayed asynchronous removal,
+  unexpected bootout failure, and inability to confirm removal. Advanced the
+  corrected artifact to immutable patch version `0.1.3`.
+- Full exact-Node verification passed with 147/147 tests, 96.21% line coverage,
+  92.82% function coverage, 80.67% branch coverage, synthetic CLI journeys,
+  bootstrap and installed-package smoke, publication/secret scans, zero
+  high-severity dependency findings, and 15/15 Playwright runtime tests.
+
 ## 2026-08-21 — Hardened 0.1.1 launchd upgrade failure
 
 **Status:** Validated; awaiting live hardened bootstrap

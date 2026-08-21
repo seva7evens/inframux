@@ -24,11 +24,11 @@ try {
     'bootstrap', '--user-mode', '--apply', '--json',
   ], repositoryRoot, environment, 6 * 60_000));
   assert.equal(bootstrap.mode, 'user');
-  assert.equal(bootstrap.version, '0.1.2');
+  assert.equal(bootstrap.version, '0.1.3');
 
   const installedCli = path.join(installRoot, 'current/bin/inframux');
   const update = parseJson(await run(installedCli, ['update', '--check', '--json'], temporaryRoot, environment));
-  assert.equal(update.currentVersion, '0.1.2');
+  assert.equal(update.currentVersion, '0.1.3');
   assert.equal(update.updateAvailable, false);
 
   const installedNode = path.join(installRoot, 'current/bin/node');

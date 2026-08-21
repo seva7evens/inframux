@@ -115,7 +115,7 @@ export class MacOsManagementSystem implements ManagementSystem {
       try {
         await this.#execute('/bin/launchctl', ['bootout', target]);
       } catch (error) {
-        if (isLaunchdServiceMissing(error)) continue;
+        if (isLaunchdServiceMissing(error, 'bootout')) continue;
         throw error;
       }
       await this.#waitForServiceRemoval(target);
@@ -128,7 +128,7 @@ export class MacOsManagementSystem implements ManagementSystem {
       try {
         await this.#execute('/bin/launchctl', ['print', target]);
       } catch (error) {
-        if (isLaunchdServiceMissing(error)) return;
+        if (isLaunchdServiceMissing(error, 'print')) return;
         throw error;
       }
       if (Date.now() >= deadline) throw new Error(`Timed out waiting for launchd service removal: ${target}`);
@@ -378,8 +378,11 @@ async function executeCommand(executable: string, args: readonly string[]): Prom
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-function isLaunchdServiceMissing(error: unknown): boolean {
+function isLaunchdServiceMissing(error: unknown, operation: 'bootout' | 'print'): boolean {
   if (!(error instanceof Error)) return false;
   const details = error as Error & { code?: unknown; stderr?: unknown };
-  return details.code === 113 && typeof details.stderr === 'string' && /Could not find service/u.test(details.stderr);
+  if (typeof details.stderr !== 'string') return false;
+  return operation === 'bootout'
+    ? details.code === 3 && /Boot-out failed:\s*3:\s*No such process/u.test(details.stderr)
+    : details.code === 113 && /Could not find service/u.test(details.stderr);
 }

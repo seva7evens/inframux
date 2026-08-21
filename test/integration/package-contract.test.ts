@@ -76,10 +76,10 @@ test('archive contract accepts only the bounded prebuilt runtime allowlist', asy
   t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
 
   const base = {
-    id: 'inframux@0.1.2',
+    id: 'inframux@0.1.3',
     name: 'inframux',
-    version: '0.1.2',
-    filename: 'inframux-0.1.2.tgz',
+    version: '0.1.3',
+    filename: 'inframux-0.1.3.tgz',
     size: 12_000,
     unpackedSize: 80_000,
     files: [

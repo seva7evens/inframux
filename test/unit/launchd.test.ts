@@ -120,6 +120,60 @@ test('waits for launchd jobs to disappear before bootstrapping replacements', as
   }
 });
 
+test('treats launchctl bootout code 3 as an already-absent service', async () => {
+  const calls: string[] = [];
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    const call = `${executable} ${args.join(' ')}`;
+    calls.push(call);
+    if (executable === '/bin/launchctl' && args[0] === 'bootout') {
+      throw Object.assign(new Error('Boot-out failed: 3: No such process'), {
+        code: 3,
+        stdout: '',
+        stderr: 'Boot-out failed: 3: No such process\n',
+      });
+    }
+    return { stdout: '', stderr: '' };
+  } });
+
+  await system.restartServices();
+
+  assert.equal(calls.filter((call) => call.startsWith('/bin/launchctl bootstrap system ')).length, 2);
+  assert.equal(calls.some((call) => call.startsWith('/bin/launchctl print ')), false);
+});
+
+test('fails closed on an unexpected launchctl bootout error', async () => {
+  const calls: string[] = [];
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    calls.push(`${executable} ${args.join(' ')}`);
+    throw Object.assign(new Error('Boot-out failed: 5: Input/output error'), {
+      code: 5,
+      stdout: '',
+      stderr: 'Boot-out failed: 5: Input/output error\n',
+    });
+  } });
+
+  await assert.rejects(system.restartServices(), /Input\/output error/);
+  assert.equal(calls.some((call) => call.startsWith('/bin/launchctl bootstrap ')), false);
+});
+
+test('fails closed when launchctl cannot confirm service removal', async () => {
+  const calls: string[] = [];
+  const system = new MacOsManagementSystem({ execute: async (executable, args) => {
+    calls.push(`${executable} ${args.join(' ')}`);
+    if (executable === '/bin/launchctl' && args[0] === 'print') {
+      throw Object.assign(new Error('Operation not permitted'), {
+        code: 1,
+        stdout: '',
+        stderr: 'Operation not permitted\n',
+      });
+    }
+    return { stdout: '', stderr: '' };
+  } });
+
+  await assert.rejects(system.restartServices(), /Operation not permitted/);
+  assert.equal(calls.some((call) => call.startsWith('/bin/launchctl bootstrap ')), false);
+});
+
 test('records only an ACL it owns, retries idempotently, and removes it on cleanup', async (t) => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), 'inframux-acl-receipt-'));
   t.after(() => rm(targetRoot, { recursive: true, force: true }));
