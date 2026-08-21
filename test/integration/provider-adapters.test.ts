@@ -113,6 +113,187 @@ test('verifies every static provider against exact catalog identity and resource
   assert.equal(seen.some((item) => item.authorization.includes('cloudflare-secret-token')), true);
 });
 
+test('accepts Cloudflare zone-name shorthand while preserving account identity pinning', async (context) => {
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    if (request.url === '/client/v4/user/tokens/verify') {
+      response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
+    } else if (request.url?.startsWith('/client/v4/accounts?')) {
+      response.end('{"success":true,"result":[{"id":"cf-account","name":"Sample"}],"result_info":{"page":1,"per_page":50,"total_count":1}}');
+    } else if (request.url?.startsWith('/client/v4/zones?')) {
+      response.end('{"success":true,"result":[{"id":"cf-zone","name":"example.test","account":{"id":"cf-account"}}],"result_info":{"page":1,"per_page":50,"total_count":1,"total_pages":1}}');
+    } else {
+      response.end('{"success":false,"result":null}');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const registry = createProviderAdapterRegistry({
+    transport: new FetchHttpTransport({ allowedOrigins: [origin], allowInsecureLoopback: true }),
+    originOverrides: { cloudflare: origin },
+  });
+  const secret = Buffer.from('cloudflare-secret-token');
+  try {
+    const result = await registry.require('cloudflare').verify({
+      project: 'sample', secret,
+      service: { credential: 'cf-admin', accountId: 'cf-account', zones: ['example.test'] },
+      signal: new AbortController().signal,
+    });
+    assert.deepEqual(result, {
+      identity: { accountId: 'cf-account' },
+      resources: { tokenId: 'token-id', zones: [{ id: 'cf-zone', name: 'example.test' }] },
+    });
+  } finally {
+    secret.fill(0);
+  }
+});
+
+test('finds the pinned Cloudflare account beyond the first result page', async (context) => {
+  const seenPages: number[] = [];
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    if (request.url === '/client/v4/user/tokens/verify') {
+      response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
+      return;
+    }
+    if (request.url?.startsWith('/client/v4/accounts?')) {
+      const page = Number(new URL(request.url, 'http://localhost').searchParams.get('page') ?? '1');
+      seenPages.push(page);
+      const account = page === 1
+        ? { id: 'other-account', name: 'Other' }
+        : { id: 'cf-account', name: 'Sample' };
+      response.end(JSON.stringify({
+        success: true, result: [account],
+        result_info: { page, per_page: 1, total_count: 2 },
+      }));
+      return;
+    }
+    if (request.url?.startsWith('/client/v4/zones?')) {
+      response.end('{"success":true,"result":[],"result_info":{"page":1,"per_page":50,"total_count":0,"total_pages":1}}');
+      return;
+    }
+    response.end('{"success":false,"result":null}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const registry = createProviderAdapterRegistry({
+    transport: new FetchHttpTransport({ allowedOrigins: [origin], allowInsecureLoopback: true }),
+    originOverrides: { cloudflare: origin },
+  });
+  const secret = Buffer.from('cloudflare-secret-token');
+  try {
+    const result = await registry.require('cloudflare').verify({
+      project: 'sample', secret,
+      service: { credential: 'cf-admin', accountId: 'cf-account', zones: [] },
+      signal: new AbortController().signal,
+    });
+    assert.deepEqual(result.identity, { accountId: 'cf-account' });
+    assert.deepEqual(seenPages, [1, 2]);
+  } finally {
+    secret.fill(0);
+  }
+});
+
+test('finds a pinned Cloudflare zone beyond the first result page', async (context) => {
+  const seenPages: number[] = [];
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    if (request.url === '/client/v4/user/tokens/verify') {
+      response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
+      return;
+    }
+    if (request.url?.startsWith('/client/v4/accounts?')) {
+      response.end('{"success":true,"result":[{"id":"cf-account","name":"Sample"}],"result_info":{"page":1,"per_page":50,"total_count":1}}');
+      return;
+    }
+    if (request.url?.startsWith('/client/v4/zones?')) {
+      const page = Number(new URL(request.url, 'http://localhost').searchParams.get('page') ?? '1');
+      seenPages.push(page);
+      const zone = page === 1
+        ? { id: 'other-zone', name: 'other.test', account: { id: 'cf-account' } }
+        : { id: 'target-zone', name: 'target.test', account: { id: 'cf-account' } };
+      response.end(JSON.stringify({
+        success: true, result: [zone],
+        result_info: { page, per_page: 1, total_count: 2, total_pages: 2 },
+      }));
+      return;
+    }
+    response.end('{"success":false,"result":null}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const registry = createProviderAdapterRegistry({
+    transport: new FetchHttpTransport({ allowedOrigins: [origin], allowInsecureLoopback: true }),
+    originOverrides: { cloudflare: origin },
+  });
+  const secret = Buffer.from('cloudflare-secret-token');
+  try {
+    const result = await registry.require('cloudflare').verify({
+      project: 'sample', secret,
+      service: { credential: 'cf-admin', accountId: 'cf-account', zones: ['target.test'] },
+      signal: new AbortController().signal,
+    });
+    assert.deepEqual(result.resources, {
+      tokenId: 'token-id',
+      zones: [{ id: 'other-zone', name: 'other.test' }, { id: 'target-zone', name: 'target.test' }],
+    });
+    assert.deepEqual(seenPages, [1, 2]);
+  } finally {
+    secret.fill(0);
+  }
+});
+
+test('classifies unsuccessful or malformed Cloudflare envelopes as provider failures', async (context) => {
+  let zoneBody = '{"success":false,"errors":[{"code":1000,"message":"rejected"}],"result":null}';
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    if (request.url === '/client/v4/user/tokens/verify') {
+      response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
+    } else if (request.url?.startsWith('/client/v4/accounts?')) {
+      response.end('{"success":true,"result":[{"id":"cf-account","name":"Sample"}]}');
+    } else if (request.url?.startsWith('/client/v4/zones?')) {
+      response.end(zoneBody);
+    } else {
+      response.end('{"success":false,"result":null}');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const registry = createProviderAdapterRegistry({
+    transport: new FetchHttpTransport({ allowedOrigins: [origin], allowInsecureLoopback: true }),
+    originOverrides: { cloudflare: origin },
+  });
+  const secret = Buffer.from('cloudflare-secret-token');
+  const verify = () => registry.require('cloudflare').verify({
+    project: 'sample', secret,
+    service: { credential: 'cf-admin', accountId: 'cf-account', zones: [] },
+    signal: new AbortController().signal,
+  });
+  try {
+    await assert.rejects(verify(), (error: unknown) => (
+      error instanceof InframuxError && error.code === 'PROVIDER_UNAVAILABLE'
+    ));
+    zoneBody = '{"success":true,"result":"not-an-array"}';
+    await assert.rejects(verify(), (error: unknown) => (
+      error instanceof InframuxError && error.code === 'PROVIDER_UNAVAILABLE'
+    ));
+  } finally {
+    secret.fill(0);
+  }
+});
+
 test('fails enrollment when an accessible provider account does not match the catalog', async (context) => {
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });

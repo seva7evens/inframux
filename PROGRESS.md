@@ -7,6 +7,42 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-22 — Cloudflare onboarding contract and live verification
+
+**Status:** Release-verified; awaiting user-authorized hardened activation and live token retry
+
+**Scope:** Reproduce the rejected Cloudflare onboarding configuration, compare
+the adapter with current official API contracts, accept the intended safe zone
+shorthand without weakening identity pinning, cover pagination and malformed
+provider responses, then verify the exact packaged hardened release before the
+user retries the still-unsaved credential. Never print or recover credential
+bytes from failed interactive input.
+
+### Activity log
+
+- Traced the reported Zod path to the local service schema before any provider
+  request: onboarding supplied the natural string-array zone shorthand while
+  the original adapter accepted only objects. The rejected credential remained
+  unsaved and was never recovered from terminal input.
+- Added focused RED tests reproducing the exact shorthand failure, first-page
+  account and zone omissions, and misleading raw validation errors for
+  unsuccessful/malformed Cloudflare envelopes. Each failed for the intended
+  pre-fix behavior before implementation.
+- The adapter now accepts string or object zone entries without weakening
+  account/zone identity pinning, follows official account and zone pagination,
+  bounds discovery, and classifies provider envelope failures as
+  `PROVIDER_UNAVAILABLE`. Existing HTTP status handling still maps missing
+  operation permissions to `SCOPE_MISSING`.
+- Updated the public enrollment contract with current official token,
+  permission, account, and zone guidance. Enrollment proves token activity and
+  pinned resource access; it does not claim one read probe can prove every
+  Cloudflare product permission.
+- Advanced the immutable package to `0.1.5`. A fresh complete `npm run verify`
+  passed 162/162 unit/integration tests, coverage gates (95.88% lines, 92.92%
+  functions, 80.84% branches), compiled multi-process E2E, fresh bootstrap,
+  packed/global consumer smoke, publication and secret scans, zero dependency
+  vulnerabilities, and 15/15 central runtime tests.
+
 ## 2026-08-22 — Repeated Sentry MCP OAuth investigation
 
 **Status:** Resolved locally; inframux runtime unchanged

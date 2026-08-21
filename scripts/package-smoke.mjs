@@ -111,11 +111,11 @@ try {
     'bootstrap', '--user-mode', '--apply', '--json',
   ], unrelatedCwd, runtimeEnvironment, 6 * 60_000));
   assert.equal(bootstrap.mode, 'user');
-  assert.equal(bootstrap.version, '0.1.4');
+  assert.equal(bootstrap.version, '0.1.5');
 
   const sealedCli = path.join(installRoot, 'current/bin/inframux');
   const update = parseJson(await run(sealedCli, ['update', '--check', '--json'], unrelatedCwd, runtimeEnvironment));
-  assert.equal(update.currentVersion, '0.1.4');
+  assert.equal(update.currentVersion, '0.1.5');
   assert.equal(update.updateAvailable, false);
 
   const installedNode = path.join(installRoot, 'current/bin/node');

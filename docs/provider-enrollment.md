@@ -27,6 +27,29 @@ redirect targets. `source.deploy` and
 `database.migrate` stay source-bound until they use the snapshot/remote-build
 path without executing repository code in the credential context.
 
+### Cloudflare configuration contract
+
+Cloudflare requires `accountId`. Optional `zones` accepts either the concise
+form `["example.com", "example.org"]` or objects such as
+`[{ "name": "example.com" }]`; both forms are normalized to names and every
+returned zone is still pinned to the configured account. Account and zone
+discovery follows Cloudflare pagination rather than assuming the first 50
+results are complete.
+
+Use a **User API Token** with `Zone Read` for enrollment plus the `Edit`
+permission groups needed by the intended operations, scoped to the intended
+account and zones. Cloudflare defines `Edit` as create/read/update/delete/list;
+there is no safe single read-only probe that proves every possible product
+permission. Enrollment proves that the token is active and can access the
+pinned account/zones. Later calls fail closed with `SCOPE_MISSING` if a specific
+operation lacks permission. Do not paste a Global API Key: it uses a different
+authentication scheme and is intentionally not accepted as a Bearer token.
+
+References: [create an API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/),
+[token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/),
+[list accounts](https://developers.cloudflare.com/api/resources/accounts/methods/list/),
+and [list zones](https://developers.cloudflare.com/api/resources/zones/methods/list/).
+
 ## Live-repository sequence
 
 Every repository uses the same [universal onboarding](onboarding.md) flow. In
