@@ -36,8 +36,8 @@ test('verifies every static provider against exact catalog identity and resource
   const fixtures = [
     {
       provider: 'cloudflare',
-      service: { credential: 'cf-admin', accountId: 'cf-account', zones: [{ name: 'example.test' }] },
-      identity: { accountId: 'cf-account' },
+      service: { credential: 'cf-admin', accountId: '0123456789abcdef0123456789abcdef', zones: [{ name: 'example.test' }] },
+      identity: { accountId: '0123456789abcdef0123456789abcdef', credentialKind: 'account-api-token' },
     },
     {
       provider: 'vercel',
@@ -116,12 +116,12 @@ test('verifies every static provider against exact catalog identity and resource
 test('accepts Cloudflare zone-name shorthand while preserving account identity pinning', async (context) => {
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
-    if (request.url === '/client/v4/user/tokens/verify') {
+    if (request.url === '/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens/verify') {
       response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
     } else if (request.url?.startsWith('/client/v4/accounts?')) {
-      response.end('{"success":true,"result":[{"id":"cf-account","name":"Sample"}],"result_info":{"page":1,"per_page":50,"total_count":1}}');
+      response.end('{"success":true,"result":[{"id":"0123456789abcdef0123456789abcdef","name":"Sample"}],"result_info":{"page":1,"per_page":50,"total_count":1}}');
     } else if (request.url?.startsWith('/client/v4/zones?')) {
-      response.end('{"success":true,"result":[{"id":"cf-zone","name":"example.test","account":{"id":"cf-account"}}],"result_info":{"page":1,"per_page":50,"total_count":1,"total_pages":1}}');
+      response.end('{"success":true,"result":[{"id":"cf-zone","name":"example.test","account":{"id":"0123456789abcdef0123456789abcdef"}}],"result_info":{"page":1,"per_page":50,"total_count":1,"total_pages":1}}');
     } else {
       response.end('{"success":false,"result":null}');
     }
@@ -139,13 +139,57 @@ test('accepts Cloudflare zone-name shorthand while preserving account identity p
   try {
     const result = await registry.require('cloudflare').verify({
       project: 'sample', secret,
-      service: { credential: 'cf-admin', accountId: 'cf-account', zones: ['example.test'] },
+      service: { credential: 'cf-admin', accountId: '0123456789abcdef0123456789abcdef', zones: ['example.test'] },
       signal: new AbortController().signal,
     });
     assert.deepEqual(result, {
-      identity: { accountId: 'cf-account' },
+      identity: { accountId: '0123456789abcdef0123456789abcdef', credentialKind: 'account-api-token' },
       resources: { tokenId: 'token-id', zones: [{ id: 'cf-zone', name: 'example.test' }] },
     });
+  } finally {
+    secret.fill(0);
+  }
+});
+
+test('verifies a Cloudflare account-owned token at the account endpoint without listing accounts', async (context) => {
+  const accountId = '0123456789abcdef0123456789abcdef';
+  const seen: string[] = [];
+  const server = createServer((request, response) => {
+    const url = request.url ?? '';
+    seen.push(url);
+    response.setHeader('content-type', 'application/json');
+    if (url === `/client/v4/accounts/${accountId}/tokens/verify`) {
+      response.writeHead(200);
+      response.end('{"success":true,"result":{"id":"account-token-id","status":"active"}}');
+    } else if (url.startsWith('/client/v4/zones?')) {
+      response.writeHead(200);
+      response.end('{"success":true,"result":[],"result_info":{"page":1,"per_page":50,"total_count":0,"total_pages":1}}');
+    } else {
+      response.writeHead(401);
+      response.end('{"success":false,"errors":[{"code":1000,"message":"wrong token verification endpoint"}]}');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address !== null && typeof address === 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const registry = createProviderAdapterRegistry({
+    transport: new FetchHttpTransport({ allowedOrigins: [origin], allowInsecureLoopback: true }),
+    originOverrides: { cloudflare: origin },
+  });
+  const secret = Buffer.from('cloudflare-account-owned-token');
+  try {
+    const result = await registry.require('cloudflare').verify({
+      project: 'sample', secret,
+      service: { credential: 'cf-admin', accountId, zones: [] },
+      signal: new AbortController().signal,
+    });
+    assert.deepEqual(result.identity, { accountId, credentialKind: 'account-api-token' });
+    assert.deepEqual(seen, [
+      `/client/v4/accounts/${accountId}/tokens/verify`,
+      `/client/v4/zones?account.id=${accountId}&page=1&per_page=50`,
+    ]);
   } finally {
     secret.fill(0);
   }
@@ -163,8 +207,8 @@ test('finds the pinned Cloudflare account beyond the first result page', async (
       const page = Number(new URL(request.url, 'http://localhost').searchParams.get('page') ?? '1');
       seenPages.push(page);
       const account = page === 1
-        ? { id: 'other-account', name: 'Other' }
-        : { id: 'cf-account', name: 'Sample' };
+        ? { id: 'fedcba9876543210fedcba9876543210', name: 'Other' }
+        : { id: '0123456789abcdef0123456789abcdef', name: 'Sample' };
       response.end(JSON.stringify({
         success: true, result: [account],
         result_info: { page, per_page: 1, total_count: 2 },
@@ -190,10 +234,15 @@ test('finds the pinned Cloudflare account beyond the first result page', async (
   try {
     const result = await registry.require('cloudflare').verify({
       project: 'sample', secret,
-      service: { credential: 'cf-admin', accountId: 'cf-account', zones: [] },
+      service: {
+        credential: 'cf-admin', accountId: '0123456789abcdef0123456789abcdef',
+        credentialKind: 'user-api-token', zones: [],
+      },
       signal: new AbortController().signal,
     });
-    assert.deepEqual(result.identity, { accountId: 'cf-account' });
+    assert.deepEqual(result.identity, {
+      accountId: '0123456789abcdef0123456789abcdef', credentialKind: 'user-api-token',
+    });
     assert.deepEqual(seenPages, [1, 2]);
   } finally {
     secret.fill(0);
@@ -204,20 +253,20 @@ test('finds a pinned Cloudflare zone beyond the first result page', async (conte
   const seenPages: number[] = [];
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
-    if (request.url === '/client/v4/user/tokens/verify') {
+    if (request.url === '/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens/verify') {
       response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
       return;
     }
     if (request.url?.startsWith('/client/v4/accounts?')) {
-      response.end('{"success":true,"result":[{"id":"cf-account","name":"Sample"}],"result_info":{"page":1,"per_page":50,"total_count":1}}');
+      response.end('{"success":true,"result":[{"id":"0123456789abcdef0123456789abcdef","name":"Sample"}],"result_info":{"page":1,"per_page":50,"total_count":1}}');
       return;
     }
     if (request.url?.startsWith('/client/v4/zones?')) {
       const page = Number(new URL(request.url, 'http://localhost').searchParams.get('page') ?? '1');
       seenPages.push(page);
       const zone = page === 1
-        ? { id: 'other-zone', name: 'other.test', account: { id: 'cf-account' } }
-        : { id: 'target-zone', name: 'target.test', account: { id: 'cf-account' } };
+        ? { id: 'other-zone', name: 'other.test', account: { id: '0123456789abcdef0123456789abcdef' } }
+        : { id: 'target-zone', name: 'target.test', account: { id: '0123456789abcdef0123456789abcdef' } };
       response.end(JSON.stringify({
         success: true, result: [zone],
         result_info: { page, per_page: 1, total_count: 2, total_pages: 2 },
@@ -239,7 +288,7 @@ test('finds a pinned Cloudflare zone beyond the first result page', async (conte
   try {
     const result = await registry.require('cloudflare').verify({
       project: 'sample', secret,
-      service: { credential: 'cf-admin', accountId: 'cf-account', zones: ['target.test'] },
+      service: { credential: 'cf-admin', accountId: '0123456789abcdef0123456789abcdef', zones: ['target.test'] },
       signal: new AbortController().signal,
     });
     assert.deepEqual(result.resources, {
@@ -256,10 +305,10 @@ test('classifies unsuccessful or malformed Cloudflare envelopes as provider fail
   let zoneBody = '{"success":false,"errors":[{"code":1000,"message":"rejected"}],"result":null}';
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
-    if (request.url === '/client/v4/user/tokens/verify') {
+    if (request.url === '/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens/verify') {
       response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
     } else if (request.url?.startsWith('/client/v4/accounts?')) {
-      response.end('{"success":true,"result":[{"id":"cf-account","name":"Sample"}]}');
+      response.end('{"success":true,"result":[{"id":"0123456789abcdef0123456789abcdef","name":"Sample"}]}');
     } else if (request.url?.startsWith('/client/v4/zones?')) {
       response.end(zoneBody);
     } else {
@@ -278,7 +327,7 @@ test('classifies unsuccessful or malformed Cloudflare envelopes as provider fail
   const secret = Buffer.from('cloudflare-secret-token');
   const verify = () => registry.require('cloudflare').verify({
     project: 'sample', secret,
-    service: { credential: 'cf-admin', accountId: 'cf-account', zones: [] },
+    service: { credential: 'cf-admin', accountId: '0123456789abcdef0123456789abcdef', zones: [] },
     signal: new AbortController().signal,
   });
   try {
@@ -300,7 +349,7 @@ test('fails enrollment when an accessible provider account does not match the ca
     if (request.url === '/client/v4/user/tokens/verify') {
       response.end('{"success":true,"result":{"id":"token-id","status":"active"}}');
     } else if (request.url?.startsWith('/client/v4/accounts')) {
-      response.end('{"success":true,"result":[{"id":"another-account","name":"Wrong"}]}');
+      response.end('{"success":true,"result":[{"id":"fedcba9876543210fedcba9876543210","name":"Wrong"}]}');
     } else response.end('{"success":true,"result":[]}');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -317,7 +366,10 @@ test('fails enrollment when an accessible provider account does not match the ca
     await assert.rejects(
       registry.require('cloudflare').verify({
         project: 'sample', secret,
-        service: { credential: 'cf-admin', accountId: 'cf-account', zones: [{ name: 'example.test' }] },
+        service: {
+          credential: 'cf-admin', accountId: '0123456789abcdef0123456789abcdef',
+          credentialKind: 'user-api-token', zones: [{ name: 'example.test' }],
+        },
         signal: new AbortController().signal,
       }),
       (error: unknown) => error instanceof InframuxError && error.code === 'WRONG_PROVIDER_IDENTITY' && /account/i.test(error.message),
@@ -383,9 +435,9 @@ test('exposes complete API coverage only through a provider-pinned relative requ
 });
 
 function route(url: string): unknown {
-  if (url === '/client/v4/user/tokens/verify') return { success: true, result: { id: 'token-id', status: 'active' } };
-  if (url.startsWith('/client/v4/accounts?')) return { success: true, result: [{ id: 'cf-account', name: 'Sample' }] };
-  if (url.startsWith('/client/v4/zones?')) return { success: true, result: [{ id: 'cf-zone', name: 'example.test', account: { id: 'cf-account' } }] };
+  if (url === '/client/v4/accounts/0123456789abcdef0123456789abcdef/tokens/verify') return { success: true, result: { id: 'token-id', status: 'active' } };
+  if (url.startsWith('/client/v4/accounts?')) return { success: true, result: [{ id: '0123456789abcdef0123456789abcdef', name: 'Sample' }] };
+  if (url.startsWith('/client/v4/zones?')) return { success: true, result: [{ id: 'cf-zone', name: 'example.test', account: { id: '0123456789abcdef0123456789abcdef' } }] };
   if (url === '/v2/user') return { user: { id: 'vercel-user', username: 'samplebot-4021', email: 'bot@example.test' } };
   if (url.startsWith('/v2/teams?')) return { teams: [{ id: 'vercel-team', slug: 'sample' }], pagination: { count: 1 } };
   if (url.startsWith('/v9/projects/vercel-project?')) return { id: 'vercel-project', name: 'sample-admin-panel', accountId: 'vercel-team' };

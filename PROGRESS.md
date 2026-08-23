@@ -7,6 +7,17 @@
   machine-specific paths.
 - Keep only publication-safe project history in this file.
 
+## 2026-08-23 — Cloudflare account-owned token validation
+
+**Status:** Release-verified; awaiting user-authorized hardened activation and one live retry
+
+**Scope:** Correct the Cloudflare credential-kind contract after a newly issued
+account-owned token was rejected by the user-token verification endpoint.
+Default new enrollment to durable account-owned tokens, retain explicit
+user-token compatibility, use the official account dashboard and verify path,
+avoid unrelated account-list permission requirements, and ship a tested patch
+without reading or recovering any failed terminal credential.
+
 ## 2026-08-22 — Cloudflare onboarding contract and live verification
 
 **Status:** Release-verified; awaiting user-authorized hardened activation and live token retry
@@ -17,6 +28,32 @@ shorthand without weakening identity pinning, cover pagination and malformed
 provider responses, then verify the exact packaged hardened release before the
 user retries the still-unsaved credential. Never print or recover credential
 bytes from failed interactive input.
+
+### Activity log
+
+- Confirmed from the active sealed runtime that account-owned tokens were sent
+  to the user-token `/user/tokens/verify` endpoint. Current official Cloudflare
+  documentation requires `/accounts/{account_id}/tokens/verify`; the repeated
+  401 therefore did not establish that the newly issued tokens were invalid.
+- Added a RED integration test that reproduced the exact `TOKEN_EXPIRED` result
+  when only the official account endpoint accepted the credential. Added a
+  separate RED catalog test for the account-token dashboard and configuration
+  contract.
+- New enrollment defaults to `account-api-token`, verifies it at the pinned
+  account endpoint, and does not require user membership or account-list
+  permissions. `user-api-token` remains an explicit compatibility mode with
+  its original user verify plus account pinning. Existing incomplete sessions
+  need no reconfiguration because `accountId` remains the identity pin and the
+  credential kind has a safe adapter default.
+- Updated the setup URL to Cloudflare's official account-owned token route and
+  documented the product compatibility gaps that prevent one account token
+  from covering every Cloudflare surface. No ambient or automatic user-token
+  fallback was added.
+- Advanced the immutable package to `0.1.6`. A fresh complete `npm run verify`
+  passed 164/164 unit/integration tests, coverage gates (95.90% lines, 92.92%
+  functions, 81.00% branches), compiled multi-process E2E, fresh bootstrap,
+  packed/global consumer smoke, publication and secret scans, zero dependency
+  vulnerabilities, and 15/15 central runtime tests.
 
 ### Activity log
 

@@ -33,7 +33,7 @@ repository yet. After the reviewed version is available on npm, installation is:
 
 ```bash
 source "$HOME/.nvm/nvm.sh"
-nvm exec 24.18.1 npm install --global inframux@0.1.5
+nvm exec 24.18.1 npm install --global inframux@0.1.6
 nvm exec 24.18.1 inframux bootstrap --apply
 ```
 

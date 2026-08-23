@@ -6,7 +6,8 @@ import { assertFound, bearer, genericApiCall } from './shared.js';
 import type { ProviderAdapter } from './types.js';
 
 const serviceSchema = z.object({
-  accountId: z.string().min(1),
+  accountId: z.string().regex(/^[a-f0-9]{32}$/i),
+  credentialKind: z.enum(['account-api-token', 'user-api-token']).default('account-api-token'),
   zones: z.array(z.union([
     z.string().min(1).transform((name) => ({ name })),
     z.object({ name: z.string().min(1) }).passthrough(),
@@ -30,19 +31,24 @@ export function cloudflareAdapter(transport: HttpTransport, origin: string): Pro
     async verify(context) {
       const service = serviceSchema.parse(context.service);
       const headers = bearer(context.secret);
+      const verifyPath = service.credentialKind === 'account-api-token'
+        ? `/client/v4/accounts/${service.accountId}/tokens/verify`
+        : '/client/v4/user/tokens/verify';
       const verified = parseCloudflareEnvelope((await transport.request({
-        origin, method: 'GET', path: '/client/v4/user/tokens/verify', headers, signal: context.signal,
+        origin, method: 'GET', path: verifyPath, headers, signal: context.signal,
       })).body, envelope(z.object({ id: z.string(), status: z.literal('active') }).passthrough()));
-      const accounts: Array<z.infer<typeof accountSchema>> = [];
-      for (let page = 1; page <= 1_000; page += 1) {
-        const response = parseCloudflareEnvelope((await transport.request({
-          origin, method: 'GET', path: '/client/v4/accounts', query: { page: String(page), per_page: '50' }, headers, signal: context.signal,
-        })).body, envelope(z.array(accountSchema)).extend({ result_info: resultInfoSchema.optional() }));
-        accounts.push(...response.result);
-        if (!hasNextPage(response.result_info, page, response.result.length, 50)) break;
-        if (page === 1_000) throw new Error('Cloudflare accounts pagination exceeded the safety limit');
+      if (service.credentialKind === 'user-api-token') {
+        const accounts: Array<z.infer<typeof accountSchema>> = [];
+        for (let page = 1; page <= 1_000; page += 1) {
+          const response = parseCloudflareEnvelope((await transport.request({
+            origin, method: 'GET', path: '/client/v4/accounts', query: { page: String(page), per_page: '50' }, headers, signal: context.signal,
+          })).body, envelope(z.array(accountSchema)).extend({ result_info: resultInfoSchema.optional() }));
+          accounts.push(...response.result);
+          if (!hasNextPage(response.result_info, page, response.result.length, 50)) break;
+          if (page === 1_000) throw new Error('Cloudflare accounts pagination exceeded the safety limit');
+        }
+        assertFound(accounts.some((item) => item.id === service.accountId), 'Cloudflare', `account ${service.accountId}`);
       }
-      assertFound(accounts.some((item) => item.id === service.accountId), 'Cloudflare', `account ${service.accountId}`);
       const zones: Array<z.infer<typeof zoneSchema>> = [];
       for (let page = 1; page <= 1_000; page += 1) {
         const response = parseCloudflareEnvelope((await transport.request({
@@ -57,7 +63,7 @@ export function cloudflareAdapter(transport: HttpTransport, origin: string): Pro
         assertFound(zones.some((zone) => zone.name === expected.name && (zone.account?.id ?? service.accountId) === service.accountId), 'Cloudflare', `zone ${expected.name}`);
       }
       return {
-        identity: Object.freeze({ accountId: service.accountId }),
+        identity: Object.freeze({ accountId: service.accountId, credentialKind: service.credentialKind }),
         resources: { tokenId: verified.result.id, zones: zones.map(({ id, name }) => ({ id, name })) },
       };
     },

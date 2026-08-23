@@ -36,16 +36,31 @@ returned zone is still pinned to the configured account. Account and zone
 discovery follows Cloudflare pagination rather than assuming the first 50
 results are complete.
 
-Use a **User API Token** with `Zone Read` for enrollment plus the `Edit`
-permission groups needed by the intended operations, scoped to the intended
-account and zones. Cloudflare defines `Edit` as create/read/update/delete/list;
-there is no safe single read-only probe that proves every possible product
-permission. Enrollment proves that the token is active and can access the
-pinned account/zones. Later calls fail closed with `SCOPE_MISSING` if a specific
-operation lacks permission. Do not paste a Global API Key: it uses a different
-authentication scheme and is intentionally not accepted as a Bearer token.
+The default credential kind is the durable **Account API Token** created under
+Manage Account > Account API Tokens. inframux verifies it through the official
+`/accounts/{account_id}/tokens/verify` endpoint and does not require unrelated
+user membership or account-list permissions. Explicit legacy User API Tokens
+remain available with `credentialKind: "user-api-token"`; they use the separate
+user verification endpoint and must prove access to the configured account.
+
+Grant `Zone Read` for enrollment plus the `Edit` permission groups needed by
+the intended operations. Cloudflare defines `Edit` as
+create/read/update/delete/list; there is no safe single read-only probe that
+proves every possible product permission. Enrollment proves that the token is
+active and can access the pinned zones. Later calls fail closed with
+`SCOPE_MISSING` if a specific operation lacks permission. Do not paste a Global
+API Key: it uses a different authentication scheme and is intentionally not
+accepted as a Bearer token.
+
+Account-owned tokens are suitable for durable infrastructure automation but
+Cloudflare's compatibility matrix still excludes some products, including
+Turnstile, Registrar, Page Rules, and selected Zero Trust surfaces. Those
+operations require a separately enrolled explicit User API Token; inframux
+never silently falls back to an ambient user credential.
 
 References: [create an API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/),
+[account-owned tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/),
+[verify an account token](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/),
 [token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/),
 [list accounts](https://developers.cloudflare.com/api/resources/accounts/methods/list/),
 and [list zones](https://developers.cloudflare.com/api/resources/zones/methods/list/).
@@ -63,7 +78,8 @@ checks below are the live-account acceptance criteria.
    approve the returned short-lived request.
 2. Enroll one static-token service at a time with `inframux enroll <project-id>
    --service <id>`. The required one-time inputs are:
-   Cloudflare full-management User API Token; Vercel account token; Supabase
+   Cloudflare account-owned API token with the required management permissions;
+   Vercel account token; Supabase
    PAT; Sentry organization token; UptimeRobot Main API Key; Resend Full Access
    key; and, when adopted, a PostHog personal API key.
 3. For Google, download one **Desktop app** OAuth client JSON and run

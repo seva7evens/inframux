@@ -35,6 +35,13 @@ test('provider descriptors expose bounded authorization metadata', () => {
   }
 });
 
+test('Cloudflare enrollment defaults to the account-owned token dashboard and exposes token kind', () => {
+  const cloudflare = registry.require('cloudflare');
+  assert.equal(cloudflare.onboarding.setupUrl, 'https://dash.cloudflare.com/?to=/:account/api-tokens');
+  assert.ok(cloudflare.onboarding.optionalConfig.includes('credentialKind'));
+  assert.deepEqual(cloudflare.identity.expectedFields, ['accountId']);
+});
+
 test('sanitizes non-secret provider config and enforces required pins', () => {
   const cloudflare = registry.require('cloudflare');
   assert.deepEqual(sanitizeServiceConfig(cloudflare, { accountId: 'account-1', zones: [{ name: 'example.com' }] }), {
